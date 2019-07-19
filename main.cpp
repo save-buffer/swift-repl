@@ -1,15 +1,19 @@
 #include <iostream>
 #include <string>
 
+#include <llvm/IR/Module.h>
+
 #include <swift/Subsystems.h>
 #include <swift/AST/ASTContext.h>
 #include <swift/AST/DiagnosticConsumer.h>
 #include <swift/AST/DiagnosticEngine.h>
 #include <swift/Basic/LangOptions.h>
+#include <swift/Basic/LLVMInitialize.h>
 #include <swift/Basic/SourceManager.h>
 #include <swift/ClangImporter/ClangImporter.h>
 #include <swift/Frontend/Frontend.h>
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
+#include <swift/SIL/SILModule.h>
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
@@ -46,11 +50,22 @@ struct REPL
                                               m_src_mgr,
                                               m_diagnostic_engine))
     {
+        static bool s_run_guard = false;
+        if(!s_run_guard)
+        {
+            INITIALIZE_LLVM();
+            s_run_guard = true;
+        }
+
         m_diagnostic_engine.setShowDiagnosticsAfterFatalError();
         m_diagnostic_engine.addConsumer(m_diagnostic_consumer);
 
         SetupLangOpts();
         SetupSearchPathOpts();
+        SetupSILOpts();
+        SetupIROpts();
+        SetupImporters();
+        swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
     }
 
     bool IsExitString(const std::string &line)
@@ -108,6 +123,22 @@ struct REPL
         CHECK_ERROR();
         //TODO(sasha): Remember variables from previous expressions?
 
+        std::unique_ptr<swift::SILModule> sil_module(
+            swift::performSILGeneration(*src_file,
+                                        m_invocation.getSILOptions()));
+
+        std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
+                                                                             *src_file,
+                                                                             std::move(sil_module),
+                                                                             "swift_repl_module",
+                                                                             swift::PrimarySpecificPaths("", input.module_name),
+                                                                             m_llvm_ctx));
+
+        std::string llvm_ir;
+        llvm::raw_string_ostream str_stream(llvm_ir);
+        llvm_module->print(str_stream, nullptr);
+        str_stream.flush();
+        std::cout << llvm_ir << std::endl;
         return true;
 #undef CHECK_ERROR
     }
@@ -143,6 +174,20 @@ private:
     {
         m_spath_opts.RuntimeResourcePath = "S:\\b\\swift\\lib\\swift";
         m_spath_opts.SDKPath = "C:\\Library\\Developer\\Platforms\\Windows.platform\\Developer\\SDKs\\Windows.sdk";
+    }
+
+    void SetupSILOpts()
+    {
+        swift::SILOptions &sil_opts = m_invocation.getSILOptions();
+        sil_opts.DisableSILPerfOptimizations = true;
+        sil_opts.OptMode = swift::OptimizationMode::NoOptimization;
+    }
+
+    void SetupIROpts()
+    {
+        swift::IRGenOptions &ir_opts = m_invocation.getIRGenOptions();
+        ir_opts.OutputKind = swift::IRGenOutputKind::Module;
+        ir_opts.UseJIT = true;
     }
 
     void SetupImporters()
@@ -227,6 +272,8 @@ private:
     swift::SourceManager m_src_mgr;
     swift::DiagnosticEngine m_diagnostic_engine;
     PrinterDiagnosticConsumer m_diagnostic_consumer;
+
+    llvm::LLVMContext m_llvm_ctx;
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
 };
