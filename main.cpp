@@ -35,6 +35,9 @@ struct REPL
     {
         m_diagnostic_engine.setShowDiagnosticsAfterFatalError();
         m_diagnostic_engine.addConsumer(m_diagnostic_consumer);
+
+        SetupLangOpts();
+        SetupSearchPathOpts();
     }
 
     bool IsExitString(const std::string &line)
@@ -47,6 +50,26 @@ struct REPL
         if(IsExitString(line))
             return false;
         return true;
+    }
+
+private:
+    void SetupLangOpts()
+    {
+        m_lang_opts.Target.setArch(llvm::Triple::ArchType::x86_64);
+        m_lang_opts.Target.setOS(llvm::Triple::OSType::Win32);
+        m_lang_opts.Target.setEnvironment(llvm::Triple::EnvironmentType::MSVC);
+        m_lang_opts.Target.setObjectFormat(llvm::Triple::ObjectFormatType::COFF);
+        m_lang_opts.EnableDollarIdentifiers = true;
+        m_lang_opts.EnableAccessControl = true;
+        m_lang_opts.EnableTargetOSChecking = false;
+        m_lang_opts.Playground = true;
+        m_lang_opts.EnableThrowWithoutTry = true;
+    }
+
+    void SetupSearchPathOpts()
+    {
+        m_spath_opts.RuntimeResourcePath = "S:\\b\\swift\\lib\\swift";
+        m_spath_opts.SDKPath = "C:\\Library\\Developer\\Platforms\\Windows.platform\\Developer\\SDKs\\Windows.sdk";
     }
 
     swift::LangOptions m_lang_opts;
