@@ -127,8 +127,29 @@ private:
         else
             std::cout << "Memory buffer loader failed\n";
 
+        if(loading_mode != swift::ModuleLoadingMode::OnlySerialized)
+        {
+            std::unique_ptr<swift::ModuleLoader> parseable_module_loader(
+                swift::ParseableInterfaceModuleLoader::create(*m_ast_ctx,
+                                                              module_cache_path,
+                                                              prebuilt_module_cache_path,
+                                                              tracker,
+                                                              loading_mode)
+                );
+            if(parseable_module_loader)
+                m_ast_ctx->addModuleLoader(std::move(parseable_module_loader));
+        }
+        std::unique_ptr<swift::ModuleLoader> serialized_module_loader(
+            swift::SerializedModuleLoader::create(*m_ast_ctx, tracker, loading_mode)
+            );
+
+        if(serialized_module_loader)
+            m_ast_ctx->addModuleLoader(std::move(serialized_module_loader));
+
         if(clang_importer)
             m_ast_ctx->addModuleLoader(std::move(clang_importer), /* isClang = */ true);
+
+        // NOTE(sasha): LLDB installs a DWARF importer here. We don't care about that (or do we?)
     }
 
     swift::CompilerInvocation m_invocation;
