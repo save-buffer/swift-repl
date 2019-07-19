@@ -13,6 +13,13 @@
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
+struct ReplInput
+{
+    unsigned buffer_id;
+    std::string module_name;
+    std::string text;
+};
+
 class PrinterDiagnosticConsumer : public swift::DiagnosticConsumer
 {
     void handleDiagnostic(swift::SourceManager &src_mgr,
@@ -53,12 +60,72 @@ struct REPL
 
     bool ExecuteSwift(std::string line)
     {
+#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { std::cout << "Error occured. Exiting." << std::endl; return true; }
+        m_diagnostic_engine.resetHadAnyError();
+
         if(IsExitString(line))
             return false;
+
+        ReplInput input = AddToSrcMgr(line);
+        auto module_id = m_ast_ctx->getIdentifier(input.module_name);
+        auto *module = swift::ModuleDecl::create(module_id, *m_ast_ctx);
+        CHECK_ERROR();
+        constexpr auto implicit_import_kind =
+            swift::SourceFile::ImplicitModuleImportKind::Stdlib;
+        m_invocation.getFrontendOptions().ModuleName = input.module_name.c_str();
+        m_invocation.getIRGenOptions().ModuleName = input.module_name.c_str();
+
+        constexpr auto src_file_kind = swift::SourceFileKind::Main;
+        swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(*module,
+                                                                         src_file_kind,
+                                                                         input.buffer_id,
+                                                                         implicit_import_kind,
+                                                                         false);
+        CHECK_ERROR();
+        swift::PersistentParserState persistent_state(*m_ast_ctx);
+
+        bool done = false;
+        do
+        {
+            swift::parseIntoSourceFile(*src_file,
+                                       input.buffer_id,
+                                       &done,
+                                       nullptr /* SILParserState */,
+                                       &persistent_state,
+                                       nullptr /* DelayedParseCB */,
+                                       false /* DelayBodyParsing */);
+            CHECK_ERROR();
+        } while(!done);
+        //TODO(sasha): Load DLLs
+        swift::performNameBinding(*src_file);
+        CHECK_ERROR();
+        swift::TopLevelContext top_level_context;
+        swift::OptionSet<swift::TypeCheckingFlags> type_check_opts;
+        swift::performTypeChecking(*src_file, top_level_context, type_check_opts);
+        //TODO(sasha): Perform playground transform?
+        CHECK_ERROR();
+        swift::typeCheckExternalDefinitions(*src_file);
+        CHECK_ERROR();
+        //TODO(sasha): Remember variables from previous expressions?
+
         return true;
+#undef CHECK_ERROR
     }
 
 private:
+    ReplInput AddToSrcMgr(const std::string &line)
+    {
+        ReplInput result;
+        static uint64_t s_num_inputs = 0;
+        result.text = line;
+        llvm::raw_string_ostream stream(result.module_name);
+        stream << "__repl_" << (s_num_inputs++);
+        stream.flush();
+        std::unique_ptr<llvm::MemoryBuffer> mb = llvm::MemoryBuffer::getMemBufferCopy(line, result.module_name);
+        result.buffer_id = m_src_mgr.addNewSourceBuffer(std::move(mb));
+        return result;
+    }
+
     void SetupLangOpts()
     {
         m_lang_opts.Target.setArch(llvm::Triple::ArchType::x86_64);
