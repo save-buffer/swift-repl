@@ -11,6 +11,8 @@
 #include <swift/Frontend/Frontend.h>
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
 
+#define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
+
 class PrinterDiagnosticConsumer : public swift::DiagnosticConsumer
 {
     void handleDiagnostic(swift::SourceManager &src_mgr,
@@ -107,6 +109,23 @@ private:
             else
                 module_cache_path = "C:\\Windows\\Temp\\SwiftModuleCache";
         }
+        constexpr swift::ModuleLoadingMode loading_mode = swift::ModuleLoadingMode::PreferSerialized;
+        llvm::Triple triple(m_invocation.getTargetTriple());
+        std::string prebuilt_module_cache_path = SWIFT_MODULE_PATH;
+        auto memory_buffer_loader(swift::MemoryBufferSerializedModuleLoader::create(*m_ast_ctx,
+                                                                                    tracker,
+                                                                                    swift::ModuleLoadingMode::PreferSerialized)
+            );
+        auto stdlib_buffer = llvm::MemoryBuffer::getFile(SWIFT_MODULE_PATH "\\Swift.swiftmodule");
+        if(stdlib_buffer)
+            memory_buffer_loader->registerMemoryBuffer("Swift", std::move(stdlib_buffer.get()));
+        else
+            std::cerr << "Failed to load module Swift\n";
+
+        if(memory_buffer_loader)
+            m_ast_ctx->addModuleLoader(std::move(memory_buffer_loader));
+        else
+            std::cout << "Memory buffer loader failed\n";
 
         if(clang_importer)
             m_ast_ctx->addModuleLoader(std::move(clang_importer), /* isClang = */ true);
