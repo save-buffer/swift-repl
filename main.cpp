@@ -1,11 +1,15 @@
 #include <iostream>
 #include <string>
 
+#include <swift/Subsystems.h>
 #include <swift/AST/ASTContext.h>
 #include <swift/AST/DiagnosticConsumer.h>
 #include <swift/AST/DiagnosticEngine.h>
 #include <swift/Basic/LangOptions.h>
 #include <swift/Basic/SourceManager.h>
+#include <swift/ClangImporter/ClangImporter.h>
+#include <swift/Frontend/Frontend.h>
+#include <swift/Frontend/ParseableInterfaceModuleLoader.h>
 
 class PrinterDiagnosticConsumer : public swift::DiagnosticConsumer
 {
@@ -72,6 +76,44 @@ private:
         m_spath_opts.SDKPath = "C:\\Library\\Developer\\Platforms\\Windows.platform\\Developer\\SDKs\\Windows.sdk";
     }
 
+    void SetupImporters()
+    {
+        swift::DependencyTracker *tracker = nullptr;
+        std::string module_cache_path;
+        swift::ClangImporterOptions &clang_importer_opts =
+            m_invocation.getClangImporterOptions();
+        clang_importer_opts.OverrideResourceDir = "S:\\b\\swift\\lib\\swift\\clang";
+        std::unique_ptr<swift::ClangImporter> clang_importer;
+        if(!clang_importer_opts.OverrideResourceDir.empty())
+        {
+            clang_importer = swift::ClangImporter::create(*m_ast_ctx, clang_importer_opts);
+            if(!clang_importer)
+            {
+                std::cout << "Failed to create ClangImporter" << std::endl;
+            }
+            else
+            {
+                clang_importer->addSearchPath("S:\\b\\swift\\lib\\swift\\shims", /* isFramework */ false, /* ifSystem */ true);
+                module_cache_path = swift::getModuleCachePathFromClang(clang_importer->getClangInstance());
+                std::cout << module_cache_path << std::endl;
+            }
+        }
+        if(module_cache_path.empty())
+        {
+            llvm::SmallString<0> path;
+            std::error_code ec = llvm::sys::fs::createUniqueDirectory("ModuleCache", path);
+            if(!ec)
+                module_cache_path = path.str();
+            else
+                module_cache_path = "C:\\Windows\\Temp\\SwiftModuleCache";
+        }
+
+        if(clang_importer)
+            m_ast_ctx->addModuleLoader(std::move(clang_importer), /* isClang = */ true);
+    }
+
+    swift::CompilerInvocation m_invocation;
+    
     swift::LangOptions m_lang_opts;
     swift::SearchPathOptions m_spath_opts;
 
