@@ -1,17 +1,28 @@
 #include <iostream>
 #include <string>
 
+#include <llvm/IR/Module.h>
+
 #include <swift/Subsystems.h>
 #include <swift/AST/ASTContext.h>
 #include <swift/AST/DiagnosticConsumer.h>
 #include <swift/AST/DiagnosticEngine.h>
 #include <swift/Basic/LangOptions.h>
+#include <swift/Basic/LLVMInitialize.h>
 #include <swift/Basic/SourceManager.h>
 #include <swift/ClangImporter/ClangImporter.h>
 #include <swift/Frontend/Frontend.h>
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
+#include <swift/SIL/SILModule.h>
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
+
+struct ReplInput
+{
+    unsigned buffer_id;
+    std::string module_name;
+    std::string text;
+};
 
 class PrinterDiagnosticConsumer : public swift::DiagnosticConsumer
 {
@@ -39,13 +50,23 @@ struct REPL
                                               m_src_mgr,
                                               m_diagnostic_engine))
     {
+        static bool s_run_guard = false;
+        if(!s_run_guard)
+        {
+            INITIALIZE_LLVM();
+            s_run_guard = true;
+        }
+
         m_diagnostic_engine.setShowDiagnosticsAfterFatalError();
         m_diagnostic_engine.addConsumer(m_diagnostic_consumer);
 
 
         SetupLangOpts();
         SetupSearchPathOpts();
+        SetupSILOpts();
+        SetupIROpts();
         SetupImporters();
+        swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
     }
 
     bool IsExitString(const std::string &line)
@@ -55,12 +76,88 @@ struct REPL
 
     bool ExecuteSwift(std::string line)
     {
+#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { std::cout << "Error occured. Exiting." << std::endl; return true; }
+        m_diagnostic_engine.resetHadAnyError();
+
         if(IsExitString(line))
             return false;
+
+        ReplInput input = AddToSrcMgr(line);
+        auto module_id = m_ast_ctx->getIdentifier(input.module_name);
+        auto *module = swift::ModuleDecl::create(module_id, *m_ast_ctx);
+        CHECK_ERROR();
+        constexpr auto implicit_import_kind =
+            swift::SourceFile::ImplicitModuleImportKind::Stdlib;
+        m_invocation.getFrontendOptions().ModuleName = input.module_name.c_str();
+        m_invocation.getIRGenOptions().ModuleName = input.module_name.c_str();
+
+        constexpr auto src_file_kind = swift::SourceFileKind::Main;
+        swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(*module,
+                                                                         src_file_kind,
+                                                                         input.buffer_id,
+                                                                         implicit_import_kind,
+                                                                         false);
+        CHECK_ERROR();
+        swift::PersistentParserState persistent_state(*m_ast_ctx);
+
+        bool done = false;
+        do
+        {
+            swift::parseIntoSourceFile(*src_file,
+                                       input.buffer_id,
+                                       &done,
+                                       nullptr /* SILParserState */,
+                                       &persistent_state,
+                                       nullptr /* DelayedParseCB */,
+                                       false /* DelayBodyParsing */);
+            CHECK_ERROR();
+        } while(!done);
+        //TODO(sasha): Load DLLs
+        swift::performNameBinding(*src_file);
+        CHECK_ERROR();
+        swift::TopLevelContext top_level_context;
+        swift::OptionSet<swift::TypeCheckingFlags> type_check_opts;
+        swift::performTypeChecking(*src_file, top_level_context, type_check_opts);
+        //TODO(sasha): Perform playground transform?
+        CHECK_ERROR();
+        swift::typeCheckExternalDefinitions(*src_file);
+        CHECK_ERROR();
+        //TODO(sasha): Remember variables from previous expressions?
+
+        std::unique_ptr<swift::SILModule> sil_module(
+            swift::performSILGeneration(*src_file,
+                                        m_invocation.getSILOptions()));
+
+        std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
+                                                                             *src_file,
+                                                                             std::move(sil_module),
+                                                                             "swift_repl_module",
+                                                                             swift::PrimarySpecificPaths("", input.module_name),
+                                                                             m_llvm_ctx));
+
+        std::string llvm_ir;
+        llvm::raw_string_ostream str_stream(llvm_ir);
+        llvm_module->print(str_stream, nullptr);
+        str_stream.flush();
+        std::cout << llvm_ir << std::endl;
         return true;
+#undef CHECK_ERROR
     }
 
 private:
+    ReplInput AddToSrcMgr(const std::string &line)
+    {
+        ReplInput result;
+        static uint64_t s_num_inputs = 0;
+        result.text = line;
+        llvm::raw_string_ostream stream(result.module_name);
+        stream << "__repl_" << (s_num_inputs++);
+        stream.flush();
+        std::unique_ptr<llvm::MemoryBuffer> mb = llvm::MemoryBuffer::getMemBufferCopy(line, result.module_name);
+        result.buffer_id = m_src_mgr.addNewSourceBuffer(std::move(mb));
+        return result;
+    }
+
     void SetupLangOpts()
     {
         m_lang_opts.Target.setArch(llvm::Triple::ArchType::x86_64);
@@ -78,6 +175,20 @@ private:
     {
         m_spath_opts.RuntimeResourcePath = "S:\\b\\swift\\lib\\swift";
         m_spath_opts.SDKPath = "C:\\Library\\Developer\\Platforms\\Windows.platform\\Developer\\SDKs\\Windows.sdk";
+    }
+
+    void SetupSILOpts()
+    {
+        swift::SILOptions &sil_opts = m_invocation.getSILOptions();
+        sil_opts.DisableSILPerfOptimizations = true;
+        sil_opts.OptMode = swift::OptimizationMode::NoOptimization;
+    }
+
+    void SetupIROpts()
+    {
+        swift::IRGenOptions &ir_opts = m_invocation.getIRGenOptions();
+        ir_opts.OutputKind = swift::IRGenOutputKind::Module;
+        ir_opts.UseJIT = true;
     }
 
     void SetupImporters()
@@ -166,6 +277,8 @@ private:
     swift::SourceManager m_src_mgr;
     swift::DiagnosticEngine m_diagnostic_engine;
     PrinterDiagnosticConsumer m_diagnostic_consumer;
+
+    llvm::LLVMContext m_llvm_ctx;
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
 };
