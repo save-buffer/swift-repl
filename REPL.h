@@ -1,4 +1,5 @@
-#pragma once
+#ifndef REPL_H
+#define REPL_H
 
 #include <iostream>
 #include <string>
@@ -69,3 +70,4 @@ private:
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
 };
+#endif
