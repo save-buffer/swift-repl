@@ -1,6 +1,18 @@
 #include "REPL.h"
+#include "TransformAST.h"
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
+
+void ConfigureFunctionLinkage(std::unique_ptr<swift::SILModule> &sil_module)
+{
+    for(auto &fn : sil_module->getFunctionList())
+    {
+        fn.setLinkage(swift::SILLinkage::Public);
+        std::cout << "Set SIL Function " << fn.getName().str() << " to public\n";
+    }
+
+    sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
+}
 
 REPL::REPL() : m_diagnostic_engine(m_src_mgr),
                m_ast_ctx(swift::ASTContext::get(m_lang_opts,
@@ -24,6 +36,14 @@ REPL::REPL() : m_diagnostic_engine(m_src_mgr),
     SetupIROpts();
     SetupImporters();
     swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
+
+    auto jit = JIT::Create();
+    if(!jit)
+    {
+        std::cerr << "Failed to initialize JIT\n";
+        return;
+    }
+    m_jit = std::move(*jit);
 }
 
 bool REPL::IsExitString(const std::string &line)
@@ -69,12 +89,21 @@ bool REPL::ExecuteSwift(std::string line)
                                    false /* DelayBodyParsing */);
         CHECK_ERROR();
     } while(!done);
+    std::cout << "=========AST==========\n";
+    src_file->dump();
+    
     //TODO(sasha): Load DLLs
     swift::performNameBinding(*src_file);
     CHECK_ERROR();
     swift::TopLevelContext top_level_context;
     swift::OptionSet<swift::TypeCheckingFlags> type_check_opts;
     swift::performTypeChecking(*src_file, top_level_context, type_check_opts);
+    
+    ModifyAST(*src_file);
+    
+    std::cout << "=========AST==========\n";
+    src_file->dump();
+
     //TODO(sasha): Perform playground transform?
     CHECK_ERROR();
     swift::typeCheckExternalDefinitions(*src_file);
@@ -88,6 +117,8 @@ bool REPL::ExecuteSwift(std::string line)
         swift::performSILGeneration(*src_file,
                                     m_invocation.getSILOptions()));
 
+    ConfigureFunctionLinkage(sil_module);
+    
     std::cout << "=========SIL==========\n";
     sil_module->dump();
     
@@ -97,15 +128,31 @@ bool REPL::ExecuteSwift(std::string line)
                                                                          "swift_repl_module",
                                                                          swift::PrimarySpecificPaths("", input.module_name),
                                                                          m_llvm_ctx));
-
     std::cout << "=========LLVM IR==========\n";
     std::string llvm_ir;
     llvm::raw_string_ostream str_stream(llvm_ir);
     llvm_module->print(str_stream, nullptr);
     str_stream.flush();
     std::cout << llvm_ir << std::endl;
+
     return true;
 #undef CHECK_ERROR
+}
+
+// ModifyAST performs four modifications on AST:
+//    - Add global variable of same type as last expression.
+//    - Modify last expression to be assignment to this global variable.
+//    - Wrap existing AST into a function called  __repl_x where x is the REPL line number
+//      (generated in AddToSrcMgr). We do this so that we don't have to remake the JIT object
+//      every time we execute a new REPL line. Later, we lookup the function by name from the
+//      JIT and call it and print out result.
+//    - Make all declarations public (except classes which will be made open) so that our
+//      our function actually gets generated. 
+void REPL::ModifyAST(swift::SourceFile &src_file)
+{
+    TransformFinalExpressionAndAddGlobal(src_file);
+    WrapInFunction(src_file);
+    MakeDeclarationsPublic(src_file);
 }
 
 REPL::ReplInput REPL::AddToSrcMgr(const std::string &line)

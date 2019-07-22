@@ -18,6 +18,8 @@
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
 #include <swift/SIL/SILModule.h>
 
+#include "JIT.h"
+
 struct REPL
 {
     REPL();
@@ -31,7 +33,8 @@ private:
         std::string module_name;
         std::string text;
     };
-    
+
+    void ModifyAST(swift::SourceFile &src_file);
     ReplInput AddToSrcMgr(const std::string &line);
     void SetupLangOpts();
     void SetupSearchPathOpts();
@@ -69,5 +72,7 @@ private:
     llvm::LLVMContext m_llvm_ctx;
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
+
+    std::unique_ptr<JIT> m_jit;
 };
 #endif
