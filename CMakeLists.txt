@@ -6,6 +6,18 @@ find_package(LLVM CONFIG REQUIRED)
 find_package(Swift CONFIG REQUIRED)
 find_package(Clang CONFIG REQUIRED)
 
-add_executable(swift-repl main.cpp REPL.cpp)
+add_executable(swift-repl main.cpp REPL.cpp JIT.cpp)
 target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
-target_link_libraries(swift-repl PRIVATE swiftAST swiftBasic swiftFrontend swiftImmediate swiftParse swiftParseSIL swiftSema swiftSIL swiftSyntax swiftSyntaxParse)
+target_link_libraries(swift-repl PRIVATE
+  LLVMExecutionEngine
+  LLVMOrcJIT
+  swiftAST
+  swiftBasic
+  swiftFrontend
+  swiftImmediate
+  swiftParse
+  swiftParseSIL
+  swiftSema
+  swiftSIL
+  swiftSyntax
+  swiftSyntaxParse)
