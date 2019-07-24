@@ -45,7 +45,7 @@ bool REPL::IsExitString(const std::string &line)
 
 bool REPL::ExecuteSwift(std::string line)
 {
-#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { std::cout << "Error occured. Exiting." << std::endl; return true; }
+#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return true; }
     m_diagnostic_engine.resetHadAnyError();
 
     if(IsExitString(line))

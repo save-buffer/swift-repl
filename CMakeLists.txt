@@ -10,7 +10,9 @@ add_executable(swift-repl
   main.cpp
   REPL.cpp
   JIT.cpp
-  TransformAST.cpp)
+  TransformAST.cpp
+  CommandLineOptions.cpp
+  Logging.cpp)
 target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 target_link_libraries(swift-repl PRIVATE
   LLVMExecutionEngine
