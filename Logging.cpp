@@ -31,6 +31,11 @@ LoggingArea g_curr_logging_area;
 
 const char *PriorityStrings[] = { "", "[INFO] ", "[WARNING ]", "[ERROR] " };
 
+void SetLoggingOptions(LoggingOptions opts)
+{
+    g_log_opts = opts;
+}
+
 void Log(std::string message, LoggingPriority priority)
 {
     if(!ShouldLog(priority))
@@ -48,9 +53,4 @@ bool ShouldLog(LoggingPriority priority)
 void SetCurrentLoggingArea(LoggingArea area)
 {
     g_curr_logging_area = area;
-}
-
-void SetLoggingOptions(LoggingOptions opts)
-{
-    g_log_opts = opts;
 }

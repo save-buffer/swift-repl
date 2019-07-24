@@ -43,9 +43,9 @@ struct LoggingOptions
     LoggingPriority min_priority = LoggingPriority::Unknown;
 };
 
+void SetLoggingOptions(LoggingOptions opts);
 void Log(std::string message, LoggingPriority priority = LoggingPriority::Info);
 bool ShouldLog(LoggingPriority priority = LoggingPriority::Error);
 void SetCurrentLoggingArea(LoggingArea area);
-void SetLoggingOptions(LoggingOptions opts);
 
 #endif

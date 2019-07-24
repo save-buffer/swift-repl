@@ -53,9 +53,11 @@ void ParseSingleCommandLineOption(std::string arg, CommandLineOptions &opts)
     llvm::StringSwitch<OptionParseFn>(opt)
         .Case("--logging", SetLoggingAreaOption)
         .Case("--logging_priority", SetLoggingPriorityOption)
+        .Default(HandleUnknownOption)
         (opt, val, opts);
 }
 
+//TODO(sasha): Make these show no logging by default in the future.
 void SetupDefaultsIfUninitialized(CommandLineOptions &opts)
 {
     if(opts.logging_opts.log_areas == LoggingArea::Unknown)

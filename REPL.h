@@ -52,11 +52,13 @@ private:
                               const swift::DiagnosticInfo &info,
                               const swift::SourceLoc)
         {
+            //NOTE(sasha): We don't use normal logging system here because we always
+            //             want to show compiler errors.
             std::string diagnostic;
             llvm::raw_string_ostream stream(diagnostic);
             swift::DiagnosticEngine::formatDiagnosticText(stream, fmt_str, fmt_args);
             stream.flush();
-            std::cout << "Received Diagnostic: " << diagnostic << std::endl;
+            std::cout << diagnostic << std::endl;
         }
     };
     
