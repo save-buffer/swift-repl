@@ -1,14 +1,16 @@
 #include "REPL.h"
+#include "Logging.h"
 #include "TransformAST.h"
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
 void ConfigureFunctionLinkage(std::unique_ptr<swift::SILModule> &sil_module)
 {
+    SetCurrentLoggingArea(LoggingArea::SIL);
     for(auto &fn : sil_module->getFunctionList())
     {
         fn.setLinkage(swift::SILLinkage::Public);
-        std::cout << "Set SIL Function " << fn.getName().str() << " to public\n";
+        Log(std::string("Set SIL Function " + fn.getName().str() + " to public"));
     }
 
     sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
@@ -26,7 +28,7 @@ REPL::REPL() : m_diagnostic_engine(m_src_mgr),
         INITIALIZE_LLVM();
         s_run_guard = true;
     }
-    
+
     m_diagnostic_engine.setShowDiagnosticsAfterFatalError();
     m_diagnostic_engine.addConsumer(m_diagnostic_consumer);
 
@@ -45,7 +47,9 @@ bool REPL::IsExitString(const std::string &line)
 
 bool REPL::ExecuteSwift(std::string line)
 {
-#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { std::cout << "Error occured. Exiting." << std::endl; return true; }
+    //NOTE(sasha): We don't use the normal logging system here because the
+    //             DiagnosticEngine will show have showed the error.
+#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return true; }
     m_diagnostic_engine.resetHadAnyError();
 
     if(IsExitString(line))
@@ -81,8 +85,12 @@ bool REPL::ExecuteSwift(std::string line)
                                    false /* DelayBodyParsing */);
         CHECK_ERROR();
     } while(!done);
-    std::cout << "=========AST==========\n";
-    src_file->dump();
+    SetCurrentLoggingArea(LoggingArea::AST);
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::cout << "=========AST Before Modifications==========\n";
+        src_file->dump();
+    }
     
     //TODO(sasha): Load DLLs
     swift::performNameBinding(*src_file);
@@ -93,26 +101,29 @@ bool REPL::ExecuteSwift(std::string line)
     
     ModifyAST(*src_file);
     
-    std::cout << "=========AST==========\n";
-    src_file->dump();
-
     //TODO(sasha): Perform playground transform?
     CHECK_ERROR();
     swift::typeCheckExternalDefinitions(*src_file);
     CHECK_ERROR();
     //TODO(sasha): Remember variables from previous expressions?
 
-    std::cout << "=========AST==========\n";
-    src_file->dump();
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::cout << "=========AST After Modification==========\n";
+        src_file->dump();
+    }
     
     std::unique_ptr<swift::SILModule> sil_module(
         swift::performSILGeneration(*src_file,
                                     m_invocation.getSILOptions()));
 
     ConfigureFunctionLinkage(sil_module);
-    
-    std::cout << "=========SIL==========\n";
-    sil_module->dump();
+    SetCurrentLoggingArea(LoggingArea::SIL);
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::cout << "=========SIL==========\n";
+        sil_module->dump();
+    }
     
     std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
                                                                          *src_file,
@@ -120,13 +131,16 @@ bool REPL::ExecuteSwift(std::string line)
                                                                          "swift_repl_module",
                                                                          swift::PrimarySpecificPaths("", input.module_name),
                                                                          m_llvm_ctx));
-    std::cout << "=========LLVM IR==========\n";
-    std::string llvm_ir;
-    llvm::raw_string_ostream str_stream(llvm_ir);
-    llvm_module->print(str_stream, nullptr);
-    str_stream.flush();
-    std::cout << llvm_ir << std::endl;
-
+    SetCurrentLoggingArea(LoggingArea::IR);
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::cout << "=========LLVM IR==========\n";
+        std::string llvm_ir;
+        llvm::raw_string_ostream str_stream(llvm_ir);
+        llvm_module->print(str_stream, nullptr);
+        str_stream.flush();
+        std::cout << llvm_ir << std::endl;
+    }
     return true;
 #undef CHECK_ERROR
 }
@@ -195,6 +209,7 @@ void REPL::SetupIROpts()
 
 void REPL::SetupImporters()
 {
+    SetCurrentLoggingArea(LoggingArea::Importer);
     swift::DependencyTracker *tracker = nullptr;
     std::string module_cache_path;
     swift::ClangImporterOptions &clang_importer_opts =
@@ -206,13 +221,13 @@ void REPL::SetupImporters()
         clang_importer = swift::ClangImporter::create(*m_ast_ctx, clang_importer_opts);
         if(!clang_importer)
         {
-            std::cout << "Failed to create ClangImporter" << std::endl;
+            Log("Failed to create ClangImporter", LoggingPriority::Error);
         }
         else
         {
             clang_importer->addSearchPath("S:\\b\\swift\\lib\\swift\\shims", /* isFramework */ false, /* ifSystem */ true);
             module_cache_path = swift::getModuleCachePathFromClang(clang_importer->getClangInstance());
-            std::cout << module_cache_path << std::endl;
+            Log("Module Cache Path: " + module_cache_path);
         }
     }
     if(module_cache_path.empty())
@@ -235,12 +250,12 @@ void REPL::SetupImporters()
     if(stdlib_buffer)
         memory_buffer_loader->registerMemoryBuffer("Swift", std::move(stdlib_buffer.get()));
     else
-        std::cerr << "Failed to load module Swift\n";
+        Log("Failed to load module Swift", LoggingPriority::Error);
 
     if(memory_buffer_loader)
         m_ast_ctx->addModuleLoader(std::move(memory_buffer_loader));
     else
-        std::cout << "Memory buffer loader failed\n";
+        Log("Failed to load module Swift", LoggingPriority::Error);
 
     if(loading_mode != swift::ModuleLoadingMode::OnlySerialized)
     {
