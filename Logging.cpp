@@ -29,7 +29,7 @@ LoggingArea &operator |=(LoggingArea &l, LoggingArea r)
 LoggingOptions g_log_opts;
 LoggingArea g_curr_logging_area;
 
-const char *PriorityStrings[] = { "", "[INFO] ", "[WARNING ]", "[ERROR] " };
+const char *PriorityStrings[] = { "[INFO] ", "[WARNING] ", "[ERROR] ", "", "" };
 
 void SetLoggingOptions(LoggingOptions opts)
 {
