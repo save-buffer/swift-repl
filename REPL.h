@@ -22,9 +22,12 @@
 
 struct REPL
 {
-    REPL();
+    static llvm::Expected<std::unique_ptr<REPL>> Create();
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
+
+protected:
+    REPL();
 
 private:
     struct ReplInput

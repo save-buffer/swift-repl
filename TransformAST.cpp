@@ -27,7 +27,7 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
         auto return_var_name = src_file.getFilename() + "_res";
         swift::VarDecl *return_var = new (ast_ctx) swift::VarDecl(
             false, // IsStatic
-            swift::VarDecl::Specifier::Var,
+            swift::VarDecl::Introducer::Var,
             false, // IsCaptureList
             swift::SourceLoc(),
             ast_ctx.getIdentifier(return_var_name.str()),
@@ -80,20 +80,15 @@ void WrapInFunction(swift::SourceFile &src_file)
             nullptr, // GenericParams
             empty_params_list, // BodyParams
             swift::TypeLoc(), // ReturnType should be void
-            last_top_level_code_decl); // Parent
+            last_top_level_code_decl->getParent()); // Parent
+        new_func->setInterfaceType(swift::FunctionType::get({}, ast_ctx.TheEmptyTupleType, {}));
 
         swift::BraceStmt *fn_body = swift::BraceStmt::create(
             ast_ctx, swift::SourceLoc(), old_top_level_body->getElements(),
             swift::SourceLoc(), true);
 
         new_func->setBody(fn_body);
-
-        swift::BraceStmt *new_top_level_body = swift::BraceStmt::create(
-             ast_ctx, fn_start,
-             llvm::ArrayRef<swift::ASTNode>(new_func),
-             fn_end, true);
-
-        last_top_level_code_decl->setBody(new_top_level_body);
+        src_file.Decls.back() = new_func;
     }
 }
 

@@ -2,18 +2,64 @@
 #include "Logging.h"
 #include "TransformAST.h"
 
+#include <cstdint>
+#include <tuple>
+#include <type_traits>
+
+#include <swift/AST/ASTMangler.h>
+
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
-void ConfigureFunctionLinkage(std::unique_ptr<swift::SILModule> &sil_module)
+// Returns expression function and result global variable
+std::tuple<swift::FuncDecl *, swift::VarDecl *> ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
 {
     SetCurrentLoggingArea(LoggingArea::SIL);
-    for(auto &fn : sil_module->getFunctionList())
-    {
-        fn.setLinkage(swift::SILLinkage::Public);
-        Log(std::string("Set SIL Function " + fn.getName().str() + " to public"));
-    }
 
+    swift::FuncDecl *res_fn = nullptr;
+    swift::VarDecl *res_var = nullptr;
+
+    const std::string res_fn_name = src_file.getFilename().str();
+    for(swift::Decl *decl : src_file.Decls)
+    {
+        assert(decl);
+        if(auto fn = llvm::dyn_cast<swift::FuncDecl>(decl))
+        {
+            swift::SILDeclRef sil_decl(fn);
+
+            std::string name_original = fn->getName().str();
+            std::string name_mangled = sil_decl.mangle();
+
+            sil_module->lookUpFunction(sil_decl)->setLinkage(swift::SILLinkage::Public);
+            Log(std::string("Set function ") + name_original + " (" + name_mangled + ") to public");
+
+            if(name_original == res_fn_name)
+                res_fn = fn;
+        }
+        else if(auto var = llvm::dyn_cast<swift::VarDecl>(decl))
+        {
+            std::string name = var->getNameStr();
+            if(name == res_fn_name + "_res")
+                res_var = var;
+        }
+    }
+    assert((res_fn == nullptr && res_var == nullptr) ||
+           (res_fn != nullptr && res_var != nullptr));
     sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
+    return std::make_tuple(res_fn, res_var);
+}
+
+llvm::Expected<std::unique_ptr<REPL>> REPL::Create()
+{
+    std::unique_ptr<REPL> result(new REPL);
+    auto jit = JIT::Create();
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    if(!jit)
+    {
+        Log("Failed to initialize JIT", LoggingPriority::Error);
+        return jit.takeError();
+    }
+    result->m_jit = std::move(*jit);
+    return std::unique_ptr<REPL>(std::move(result));
 }
 
 REPL::REPL() : m_diagnostic_engine(m_src_mgr),
@@ -88,7 +134,7 @@ bool REPL::ExecuteSwift(std::string line)
     SetCurrentLoggingArea(LoggingArea::AST);
     if(ShouldLog(LoggingPriority::Info))
     {
-        std::cout << "=========AST Before Modifications==========\n";
+        Log("=========AST Before Modifications==========");
         src_file->dump();
     }
     
@@ -109,7 +155,7 @@ bool REPL::ExecuteSwift(std::string line)
 
     if(ShouldLog(LoggingPriority::Info))
     {
-        std::cout << "=========AST After Modification==========\n";
+        Log("=========AST After Modification==========");
         src_file->dump();
     }
     
@@ -117,11 +163,14 @@ bool REPL::ExecuteSwift(std::string line)
         swift::performSILGeneration(*src_file,
                                     m_invocation.getSILOptions()));
 
-    ConfigureFunctionLinkage(sil_module);
+    swift::FuncDecl *res_fn;
+    swift::VarDecl *res_var;
+    std::tie(res_fn, res_var) = ConfigureFunctionLinkage(*src_file, sil_module);
+
     SetCurrentLoggingArea(LoggingArea::SIL);
     if(ShouldLog(LoggingPriority::Info))
     {
-        std::cout << "=========SIL==========\n";
+        Log("=========SIL==========");
         sil_module->dump();
     }
     
@@ -131,16 +180,53 @@ bool REPL::ExecuteSwift(std::string line)
                                                                          "swift_repl_module",
                                                                          swift::PrimarySpecificPaths("", input.module_name),
                                                                          m_llvm_ctx));
+
     SetCurrentLoggingArea(LoggingArea::IR);
     if(ShouldLog(LoggingPriority::Info))
     {
-        std::cout << "=========LLVM IR==========\n";
+        Log("Symbols in IR:");
+        for(auto &g : llvm_module->global_values())
+            std::cout << '\t' << g.getName().str() << '\n';
+
         std::string llvm_ir;
         llvm::raw_string_ostream str_stream(llvm_ir);
+        str_stream << "=========LLVM IR==========\n";
         llvm_module->print(str_stream, nullptr);
         str_stream.flush();
-        std::cout << llvm_ir << std::endl;
+        Log(llvm_ir);
     }
+
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    m_jit->AddModule(std::move(llvm_module));
+
+    swift::Mangle::ASTMangler mangler;
+    std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
+    std::string mangled_var_name = mangler.mangleGlobalVariableFull(res_var);
+
+    using IntFn = std::add_pointer<uint64_t()>::type;
+    IntFn result_fn = nullptr;
+    uint64_t *result =  nullptr;
+    if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
+    {
+        result_fn = reinterpret_cast<IntFn>(symbol->getAddress());
+    }
+    else
+    {
+        Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
+        return false;
+    }
+    if(auto symbol = m_jit->LookupSymbol(mangled_var_name))
+    {
+        result = reinterpret_cast<uint64_t *>(symbol->getAddress());
+    }
+    else
+    {
+        Log(std::string("Failed to load result variable symbol!") + mangled_var_name, LoggingPriority::Error);
+        return false;
+    }
+
+    result_fn();
+    std::cout << (res_var ? *result : 0) << std::endl;
     return true;
 #undef CHECK_ERROR
 }

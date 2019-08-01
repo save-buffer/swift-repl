@@ -14,11 +14,22 @@ int main(int argc, char **argv)
 {
     SetupOptions(argc, argv);
 
+    llvm::Expected<std::unique_ptr<REPL>> repl = REPL::Create();
+    if(!repl)
+    {
+        std::string err_str;
+        llvm::raw_string_ostream stream(err_str);
+        stream << repl.takeError();
+        stream.flush();
+        SetCurrentLoggingArea(LoggingArea::All);
+        Log(err_str, LoggingPriority::Error);
+        return 1;
+    }
+
     std::string line;
-    REPL repl;
     do
     {
         std::getline(std::cin, line);
-    } while(repl.ExecuteSwift(line));
+    } while((*repl)->ExecuteSwift(line));
     return 0;
 }

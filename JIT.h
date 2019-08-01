@@ -16,7 +16,7 @@ class JIT
 {
 public:
     static llvm::Expected<std::unique_ptr<JIT>> Create();
-    llvm::Error AddModule(std::unique_ptr<llvm::Module> module);
+    void AddModule(std::unique_ptr<llvm::Module> module);
     llvm::Expected<llvm::JITEvaluatedSymbol> LookupSymbol(llvm::StringRef symbol_name);
 
 private:
