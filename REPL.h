@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <unordered_map>
 
 #include <llvm/IR/Module.h>
 
@@ -22,13 +23,13 @@
 
 struct REPL
 {
-    static llvm::Expected<std::unique_ptr<REPL>> Create();
+    static llvm::Expected<std::unique_ptr<REPL>> Create(bool is_playground = false);
     std::string GetLine();
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
 
 protected:
-    REPL();
+    explicit REPL(bool is_playground);
 
 private:
     struct ReplInput
@@ -38,6 +39,7 @@ private:
         std::string text;
     };
 
+    llvm::Optional<std::unique_ptr<llvm::Module>> CompileSourceFileToIR(swift::SourceFile &src_file);
     void ModifyAST(swift::SourceFile &src_file);
     ReplInput AddToSrcMgr(const std::string &line);
     void SetupLangOpts();
@@ -66,6 +68,7 @@ private:
         }
     };
 
+    const bool m_is_playground;
     uint64_t m_curr_input_number;
 
     swift::CompilerInvocation m_invocation;
@@ -81,6 +84,8 @@ private:
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
 
+    using DeclMap = std::unordered_map<std::string, swift::SourceFile *>;
+    DeclMap m_decl_map;
     std::vector<swift::Identifier> m_modules;
 
     std::unique_ptr<JIT> m_jit;
