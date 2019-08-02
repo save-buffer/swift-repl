@@ -23,6 +23,7 @@
 struct REPL
 {
     static llvm::Expected<std::unique_ptr<REPL>> Create();
+    std::string GetLine();
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
 
@@ -64,7 +65,9 @@ private:
             std::cout << diagnostic << std::endl;
         }
     };
-    
+
+    uint64_t m_curr_input_number;
+
     swift::CompilerInvocation m_invocation;
     
     swift::LangOptions m_lang_opts;

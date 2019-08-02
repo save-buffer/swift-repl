@@ -21,8 +21,16 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
         swift::ASTContext &ast_ctx = src_file.getASTContext();
         llvm::MutableArrayRef<swift::ASTNode>::iterator back_iterator =
             last_top_level_code_decl->getBody()->getElements().end() - 1;
+
         swift::Expr *last_expr = (*back_iterator).dyn_cast<swift::Expr *>();
+        if(!last_expr)
+            return;
+
         swift::Type return_type = last_expr->getType();
+
+        // Don't create result variable of type void
+        if(swift::CanType(return_type) == swift::CanType(ast_ctx.TheEmptyTupleType))
+            return;
 
         auto return_var_name = src_file.getFilename() + "_res";
         swift::VarDecl *return_var = new (ast_ctx) swift::VarDecl(
@@ -47,6 +55,94 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
                 last_expr, last_top_level_code_decl);
 
         *back_iterator = assignment;
+
+        // Insert print statement:
+        llvm::SmallVector<swift::ValueDecl *, 0> lookup_result;
+        ast_ctx.getStdlibModule()->lookupMember(
+            lookup_result,
+            ast_ctx.getStdlibModule(),
+            swift::DeclName(ast_ctx.getIdentifier("print")),
+            swift::Identifier());
+
+        swift::ValueDecl *print_decl = lookup_result.front();
+        lookup_result.clear();
+
+        swift::Type string_type;
+        for(auto *file : ast_ctx.getStdlibModule()->getFiles())
+            file->lookupValue({}, ast_ctx.getIdentifier("String"), swift::NLKind::UnqualifiedLookup, lookup_result);
+
+        if(auto *type_decl = llvm::dyn_cast<swift::NominalTypeDecl>(lookup_result.front()))
+            string_type = type_decl->getDeclaredType();
+        assert(string_type);
+
+        swift::Identifier separator_id = ast_ctx.getIdentifier("separator");
+        swift::Identifier terminator_id = ast_ctx.getIdentifier("terminator");
+
+        swift::Type print_type = swift::FunctionType::get(
+            {
+                swift::AnyFunctionType::Param(ast_ctx.TheAnyType, swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
+                swift::AnyFunctionType::Param(string_type, separator_id),
+                swift::AnyFunctionType::Param(string_type, terminator_id),
+            },
+            ast_ctx.TheEmptyTupleType);
+
+        swift::DeclRefExpr *print_ref = new (ast_ctx) swift::DeclRefExpr(
+            swift::ConcreteDeclRef(print_decl),
+            swift::DeclNameLoc(), true, swift::AccessSemantics::Ordinary, print_type);
+
+        swift::DeclRefExpr *res_var_ref = new (ast_ctx) swift::DeclRefExpr(
+            swift::ConcreteDeclRef(return_var),
+            swift::DeclNameLoc(), true, swift::AccessSemantics::Ordinary, return_type);
+
+        swift::ErasureExpr *erasure = swift::ErasureExpr::create(
+            ast_ctx, res_var_ref, ast_ctx.TheAnyType, {});
+
+        swift::ArrayExpr *array = swift::ArrayExpr::create(
+            ast_ctx, swift::SourceLoc(), { erasure }, {}, swift::SourceLoc(), swift::ArraySliceType::get(ast_ctx.TheAnyType));
+
+        swift::VarargExpansionExpr *vararg = new (ast_ctx) swift::VarargExpansionExpr(
+            array, false, array->getType());
+
+        swift::DefaultArgumentExpr *default_separator = new (ast_ctx) swift::DefaultArgumentExpr(
+            swift::ConcreteDeclRef(print_decl), 1, swift::SourceLoc(), string_type);
+
+        swift::DefaultArgumentExpr *default_terminator = new (ast_ctx) swift::DefaultArgumentExpr(
+            swift::ConcreteDeclRef(print_decl), 2, swift::SourceLoc(), string_type);
+
+        swift::Type tuple_type = swift::TupleType::get(
+            {
+                swift::TupleTypeElt(array->getType(), swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
+                swift::TupleTypeElt(string_type, separator_id),
+                swift::TupleTypeElt(string_type, terminator_id),
+            },
+            ast_ctx);
+
+        swift::TupleExpr *tuple = swift::TupleExpr::create(
+            ast_ctx, swift::SourceLoc(),
+            { vararg, default_separator, default_terminator },
+            { swift::Identifier(), separator_id, terminator_id },
+            { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
+            swift::SourceLoc(), false, true,
+            tuple_type);
+
+        swift::CallExpr *call = swift::CallExpr::create(
+            ast_ctx, print_ref, tuple,
+            { swift::Identifier() },
+            { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
+            false, true, ast_ctx.TheEmptyTupleType);
+        call->setThrows(false);
+
+        // Append the call to print to the body
+        std::vector<swift::ASTNode> new_body;
+        for(auto statement : last_top_level_code_decl->getBody()->getElements())
+            new_body.push_back(statement);
+        new_body.push_back(call);
+
+        // Update the body
+        last_top_level_code_decl->setBody(swift::BraceStmt::create(
+                                              ast_ctx, swift::SourceLoc(),
+                                              new_body, swift::SourceLoc(), true)
+            );
     }
 }
 
