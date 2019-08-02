@@ -81,6 +81,8 @@ private:
 
     std::unique_ptr<swift::ASTContext> m_ast_ctx;
 
+    std::vector<swift::Identifier> m_modules;
+
     std::unique_ptr<JIT> m_jit;
 };
 #endif
