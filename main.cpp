@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     std::string line;
     do
     {
-        std::getline(std::cin, line);
+        line = (*repl)->GetLine();
     } while((*repl)->ExecuteSwift(line));
     return 0;
 }

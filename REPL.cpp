@@ -7,16 +7,16 @@
 #include <type_traits>
 
 #include <swift/AST/ASTMangler.h>
+#include <swift/SILOptimizer/PassManager/Passes.h>
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
 // Returns expression function and result global variable
-std::tuple<swift::FuncDecl *, swift::VarDecl *> ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
+swift::FuncDecl *ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
 {
     SetCurrentLoggingArea(LoggingArea::SIL);
 
     swift::FuncDecl *res_fn = nullptr;
-    swift::VarDecl *res_var = nullptr;
 
     const std::string res_fn_name = src_file.getFilename().str();
     for(swift::Decl *decl : src_file.Decls)
@@ -35,17 +35,9 @@ std::tuple<swift::FuncDecl *, swift::VarDecl *> ConfigureFunctionLinkage(swift::
             if(name_original == res_fn_name)
                 res_fn = fn;
         }
-        else if(auto var = llvm::dyn_cast<swift::VarDecl>(decl))
-        {
-            std::string name = var->getNameStr();
-            if(name == res_fn_name + "_res")
-                res_var = var;
-        }
     }
-    assert((res_fn == nullptr && res_var == nullptr) ||
-           (res_fn != nullptr && res_var != nullptr));
     sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
-    return std::make_tuple(res_fn, res_var);
+    return res_fn;
 }
 
 llvm::Expected<std::unique_ptr<REPL>> REPL::Create()
@@ -62,7 +54,8 @@ llvm::Expected<std::unique_ptr<REPL>> REPL::Create()
     return std::unique_ptr<REPL>(std::move(result));
 }
 
-REPL::REPL() : m_diagnostic_engine(m_src_mgr),
+REPL::REPL() : m_curr_input_number(0),
+               m_diagnostic_engine(m_src_mgr),
                m_ast_ctx(swift::ASTContext::get(m_lang_opts,
                                                 m_spath_opts,
                                                 m_src_mgr,
@@ -84,6 +77,19 @@ REPL::REPL() : m_diagnostic_engine(m_src_mgr),
     SetupIROpts();
     SetupImporters();
     swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
+}
+
+std::string REPL::GetLine()
+{
+    m_curr_input_number++;
+    std::cout << "\n";
+    std::string result = "";
+    do
+    {
+        std::cout << m_curr_input_number << "> ";
+        std::getline(std::cin, result);
+    } while(result.empty());
+    return result;
 }
 
 bool REPL::IsExitString(const std::string &line)
@@ -163,9 +169,9 @@ bool REPL::ExecuteSwift(std::string line)
         swift::performSILGeneration(*src_file,
                                     m_invocation.getSILOptions()));
 
-    swift::FuncDecl *res_fn;
-    swift::VarDecl *res_var;
-    std::tie(res_fn, res_var) = ConfigureFunctionLinkage(*src_file, sil_module);
+    swift::FuncDecl *res_fn = ConfigureFunctionLinkage(*src_file, sil_module);
+    assert(res_fn);
+    swift::runSILDiagnosticPasses(*sil_module);
 
     SetCurrentLoggingArea(LoggingArea::SIL);
     if(ShouldLog(LoggingPriority::Info))
@@ -173,7 +179,7 @@ bool REPL::ExecuteSwift(std::string line)
         Log("=========SIL==========");
         sil_module->dump();
     }
-    
+
     std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
                                                                          *src_file,
                                                                          std::move(sil_module),
@@ -201,7 +207,6 @@ bool REPL::ExecuteSwift(std::string line)
 
     swift::Mangle::ASTMangler mangler;
     std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
-    std::string mangled_var_name = mangler.mangleGlobalVariableFull(res_var);
 
     using IntFn = std::add_pointer<uint64_t()>::type;
     IntFn result_fn = nullptr;
@@ -209,24 +214,14 @@ bool REPL::ExecuteSwift(std::string line)
     if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
     {
         result_fn = reinterpret_cast<IntFn>(symbol->getAddress());
+        Log(std::string("Loaded function ") + mangled_fn_name);
     }
     else
     {
         Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
         return false;
     }
-    if(auto symbol = m_jit->LookupSymbol(mangled_var_name))
-    {
-        result = reinterpret_cast<uint64_t *>(symbol->getAddress());
-    }
-    else
-    {
-        Log(std::string("Failed to load result variable symbol!") + mangled_var_name, LoggingPriority::Error);
-        return false;
-    }
-
     result_fn();
-    std::cout << (res_var ? *result : 0) << std::endl;
     return true;
 #undef CHECK_ERROR
 }
@@ -250,10 +245,9 @@ void REPL::ModifyAST(swift::SourceFile &src_file)
 REPL::ReplInput REPL::AddToSrcMgr(const std::string &line)
 {
     ReplInput result;
-    static uint64_t s_num_inputs = 0;
     result.text = line;
     llvm::raw_string_ostream stream(result.module_name);
-    stream << "__repl_" << (s_num_inputs++);
+    stream << "__repl_" << m_curr_input_number;
     stream.flush();
     std::unique_ptr<llvm::MemoryBuffer> mb = llvm::MemoryBuffer::getMemBufferCopy(line, result.module_name);
     result.buffer_id = m_src_mgr.addNewSourceBuffer(std::move(mb));
