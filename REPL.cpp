@@ -1,6 +1,7 @@
 #include "REPL.h"
 #include "Logging.h"
 #include "TransformAST.h"
+#include "TransformIR.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -32,6 +33,32 @@ void ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift
         }
     }
     sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
+}
+
+void REPL::RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &llvm_module)
+{
+    SetCurrentLoggingArea(LoggingArea::SIL);
+
+    for(const llvm::Function &fn : llvm_module->functions())
+    {
+        if(fn.isDeclaration() || !fn.hasExternalLinkage())
+            continue;
+        std::string name = fn.getName().str();
+
+        if(llvm::Error err = m_jit->RemoveSymbol(name))
+        {
+            SetCurrentLoggingArea(LoggingArea::JIT);
+            llvm::handleAllErrors(std::move(err),
+                                  [&](const llvm::orc::SymbolsCouldNotBeRemoved &)
+                                  {
+                                      Log((llvm::Twine("Could not remove symbol") + name).str(), LoggingPriority::Error);
+                                  },
+                                  [](const llvm::orc::SymbolsNotFound &) { /* pass */ });
+        }
+
+        if(m_fn_ptr_map.find(name) == m_fn_ptr_map.end())
+            m_fn_ptr_map[name] = "";
+    }
 }
 
 llvm::Expected<std::unique_ptr<REPL>> REPL::Create(bool is_playground)
@@ -90,12 +117,14 @@ bool REPL::IsExitString(const std::string &line)
     return line == "e" || line == "exit";
 }
 
-bool REPL::ExecuteSwift(std::string line)
-{
-//NOTE(sasha): We don't use the normal logging system here because the
-//             DiagnosticEngine will have shown the error.
+// NOTE(sasha): We don't use the normal logging system here because the
+//              DiagnosticEngine will have shown the error.
+// TODO(sasha): Make this not print to stdout
 #define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return true; }
 #define PRINT_INVALID_REDECLARATION(name) { std::cout << "Invalid redeclaration of " << name << "\n"; return true; }
+
+bool REPL::ExecuteSwift(std::string line)
+{
     m_diagnostic_engine.resetHadAnyError();
 
     if(IsExitString(line))
@@ -212,7 +241,9 @@ bool REPL::ExecuteSwift(std::string line)
             m_modules.push_back(new_module_id);
         }
         else
+        {
             src_file = m_decl_map[name];
+        }
 
         m_ast_ctx->LoadedModules[new_module_id] = new_module;
         m_decl_map[unmangled_name] = src_file;
@@ -227,14 +258,8 @@ bool REPL::ExecuteSwift(std::string line)
             src_file->dump();
         }
 
-        if(auto llvm_module = CompileSourceFileToIR(*src_file))
-        {
-            m_jit->AddModule(std::move(*llvm_module));
-        }
-        else
-        {
-            return false;
-        }
+        if(!CompileSourceFileToIRAndAddToJIT(*src_file))
+            return true;
     }
 
     SetCurrentLoggingArea(LoggingArea::JIT);
@@ -247,8 +272,8 @@ bool REPL::ExecuteSwift(std::string line)
         if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
         {
             result_fn = reinterpret_cast<ReplFn>(symbol->getAddress());
-            result_fn();
             Log(std::string("Loaded function ") + mangled_fn_name);
+            result_fn();
         }
         else
         {
@@ -257,12 +282,33 @@ bool REPL::ExecuteSwift(std::string line)
         }
     }
     return true;
-#undef CHECK_ERROR
 }
 
-llvm::Optional<std::unique_ptr<llvm::Module>> REPL::CompileSourceFileToIR(swift::SourceFile &src_file)
+llvm::Error REPL::UpdateFunctionPointers()
 {
-#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return llvm::Optional<std::unique_ptr<llvm::Module>>(llvm::NoneType::None); }
+    for(const auto &name : m_fn_ptr_map)
+    {
+        auto fn = m_jit->LookupSymbol(name.first);
+        if(fn)
+        {
+            auto ptr = m_jit->LookupSymbol(name.second);
+            if(ptr)
+                *reinterpret_cast<std::uintptr_t *>(ptr->getAddress()) =
+                    static_cast<std::uintptr_t>(fn->getAddress());
+            else
+                return ptr.takeError();
+        }
+        else
+        {
+            return fn.takeError();
+        }
+    }
+    return llvm::Error::success();
+}
+
+
+bool REPL::CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file)
+{
     std::unique_ptr<swift::SILModule> sil_module(
         swift::performSILGeneration(src_file,
                                     m_invocation.getSILOptions()));
@@ -283,7 +329,6 @@ llvm::Optional<std::unique_ptr<llvm::Module>> REPL::CompileSourceFileToIR(swift:
                                                                          "swift_repl_module",
                                                                          swift::PrimarySpecificPaths(),
                                                                          m_llvm_ctx));
-
     SetCurrentLoggingArea(LoggingArea::IR);
     if(ShouldLog(LoggingPriority::Info))
     {
@@ -298,7 +343,32 @@ llvm::Optional<std::unique_ptr<llvm::Module>> REPL::CompileSourceFileToIR(swift:
         str_stream.flush();
         Log(llvm_ir);
     }
-    return std::move(llvm_module);
+
+    RemoveRedeclarationsFromJIT(llvm_module);
+    AddFunctionPointers(llvm_module, m_jit, m_llvm_ctx, m_fn_ptr_map);
+    ReplaceFunctionCallsWithIndirectFunctionCalls(llvm_module,
+                                                  m_llvm_ctx,
+                                                  m_fn_ptr_map);
+
+    SetCurrentLoggingArea(LoggingArea::IR);
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::string llvm_ir;
+        llvm::raw_string_ostream str_stream(llvm_ir);
+        str_stream << "=========New LLVM IR==========\n";
+        llvm_module->print(str_stream, nullptr);
+        str_stream.flush();
+        Log(llvm_ir);
+    }
+
+    m_jit->AddModule(std::move(llvm_module));
+
+    if(UpdateFunctionPointers())
+    {
+        Log("Unable to update function pointers", LoggingPriority::Error);
+        return false;
+    }
+    return true;
 }
 
 // ModifyAST performs four modifications on AST:

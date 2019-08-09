@@ -11,6 +11,7 @@ add_executable(swift-repl
   REPL.cpp
   JIT.cpp
   TransformAST.cpp
+  TransformIR.cpp
   CommandLineOptions.cpp
   Logging.cpp)
 target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})

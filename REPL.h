@@ -39,7 +39,9 @@ private:
         std::string text;
     };
 
-    llvm::Optional<std::unique_ptr<llvm::Module>> CompileSourceFileToIR(swift::SourceFile &src_file);
+    void RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &sil_module);
+    llvm::Error UpdateFunctionPointers();
+    bool CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file);
     void ModifyAST(swift::SourceFile &src_file);
     ReplInput AddToSrcMgr(const std::string &line);
     void SetupLangOpts();
@@ -47,7 +49,7 @@ private:
     void SetupSILOpts();
     void SetupIROpts();
     void SetupImporters();
-    
+
     class PrinterDiagnosticConsumer : public swift::DiagnosticConsumer
     {
         void handleDiagnostic(swift::SourceManager &src_mgr,
@@ -86,6 +88,7 @@ private:
 
     using DeclMap = std::unordered_map<std::string, swift::SourceFile *>;
     DeclMap m_decl_map;
+    std::unordered_map<std::string, std::string> m_fn_ptr_map;
     std::vector<swift::Identifier> m_modules;
 
     std::unique_ptr<JIT> m_jit;
