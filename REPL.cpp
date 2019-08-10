@@ -116,12 +116,11 @@ bool REPL::ExecuteSwift(std::string line)
     m_invocation.getFrontendOptions().ModuleName = input.module_name.c_str();
     m_invocation.getIRGenOptions().ModuleName = input.module_name.c_str();
 
-    constexpr auto src_file_kind = swift::SourceFileKind::Main;
-    swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(*module,
-                                                                     src_file_kind,
-                                                                     input.buffer_id,
-                                                                     implicit_import_kind,
-                                                                     false);
+    swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(
+        *module, swift::SourceFileKind::Main, input.buffer_id,
+        implicit_import_kind);
+    module->addFile(*src_file);
+
     CHECK_ERROR();
     swift::PersistentParserState persistent_state(*m_ast_ctx);
 
@@ -143,7 +142,7 @@ bool REPL::ExecuteSwift(std::string line)
         Log("=========AST Before Modifications==========");
         src_file->dump();
     }
-    
+    AddImportNodes(*src_file, m_modules);
     //TODO(sasha): Load DLLs
     swift::performNameBinding(*src_file);
     CHECK_ERROR();
@@ -157,29 +156,27 @@ bool REPL::ExecuteSwift(std::string line)
     CHECK_ERROR();
     swift::typeCheckExternalDefinitions(*src_file);
     CHECK_ERROR();
-    //TODO(sasha): Remember variables from previous expressions?
 
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========AST After Modification==========");
         src_file->dump();
     }
-    
+
     std::unique_ptr<swift::SILModule> sil_module(
         swift::performSILGeneration(*src_file,
                                     m_invocation.getSILOptions()));
-
+    CHECK_ERROR();
     swift::FuncDecl *res_fn = ConfigureFunctionLinkage(*src_file, sil_module);
-    assert(res_fn);
     swift::runSILDiagnosticPasses(*sil_module);
-
+    CHECK_ERROR();
     SetCurrentLoggingArea(LoggingArea::SIL);
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========SIL==========");
         sil_module->dump();
     }
-
+    CHECK_ERROR();
     std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
                                                                          *src_file,
                                                                          std::move(sil_module),
@@ -205,23 +202,28 @@ bool REPL::ExecuteSwift(std::string line)
     SetCurrentLoggingArea(LoggingArea::JIT);
     m_jit->AddModule(std::move(llvm_module));
 
-    swift::Mangle::ASTMangler mangler;
-    std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
+    if(res_fn)
+    {
+        swift::Mangle::ASTMangler mangler;
+        std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
 
-    using IntFn = std::add_pointer<uint64_t()>::type;
-    IntFn result_fn = nullptr;
-    uint64_t *result =  nullptr;
-    if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
-    {
-        result_fn = reinterpret_cast<IntFn>(symbol->getAddress());
-        Log(std::string("Loaded function ") + mangled_fn_name);
+        using IntFn = std::add_pointer<uint64_t()>::type;
+        IntFn result_fn = nullptr;
+        uint64_t *result =  nullptr;
+        if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
+        {
+            result_fn = reinterpret_cast<IntFn>(symbol->getAddress());
+            Log(std::string("Loaded function ") + mangled_fn_name);
+        }
+        else
+        {
+            Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
+            return false;
+        }
+        result_fn();
     }
-    else
-    {
-        Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
-        return false;
-    }
-    result_fn();
+    m_modules.push_back(module_id);
+    m_ast_ctx->LoadedModules[module_id] = module;
     return true;
 #undef CHECK_ERROR
 }
@@ -237,6 +239,7 @@ bool REPL::ExecuteSwift(std::string line)
 //      our function actually gets generated. 
 void REPL::ModifyAST(swift::SourceFile &src_file)
 {
+    CombineTopLevelDeclsAndMoveToBack(src_file);
     TransformFinalExpressionAndAddGlobal(src_file);
     WrapInFunction(src_file);
     MakeDeclarationsPublic(src_file);

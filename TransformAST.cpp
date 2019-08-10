@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include <swift/AST/ASTContext.h>
 #include <swift/AST/ASTWalker.h>
@@ -8,6 +10,71 @@
 #include <swift/AST/Stmt.h>
 
 #include "TransformAST.h"
+
+void AddImportNodes(swift::SourceFile &src_file,
+                    const std::vector<swift::Identifier> &modules)
+{
+    swift::ASTContext &ast_ctx = src_file.getASTContext();
+    std::vector<swift::Decl *> import_decls;
+    std::transform(modules.begin(), modules.end(),
+                   std::back_inserter(import_decls),
+                   [&](const swift::Identifier &module)
+                   {
+                       auto result = swift::ImportDecl::create(
+                           ast_ctx, &src_file, swift::SourceLoc(),
+                           swift::ImportKind::Module, swift::SourceLoc(),
+                           { { module, swift::SourceLoc() } });
+                       result->setImplicit(true);
+                       return result;
+                   });
+    src_file.Decls.insert(src_file.Decls.begin(),
+                          import_decls.begin(), import_decls.end());
+}
+
+void CombineTopLevelDeclsAndMoveToBack(swift::SourceFile &src_file)
+{
+    if(src_file.Decls.empty())
+        return;
+
+    std::sort(src_file.Decls.begin(), src_file.Decls.end(),
+              [](const swift::Decl *a, const swift::Decl *b)
+              {
+                  int is_a_top = llvm::isa<swift::TopLevelCodeDecl>(a);
+                  int is_b_top = llvm::isa<swift::TopLevelCodeDecl>(b);
+                  return is_a_top < is_b_top;
+              });
+    // NOTE(sasha): TLD = Top Level Declaration
+    auto tld_iter = std::find_if(src_file.Decls.begin(), src_file.Decls.end(),
+                                 [](const swift::Decl *d)
+                                 {
+                                     return llvm::isa<swift::TopLevelCodeDecl>(d);
+                                 });
+
+    if(tld_iter == src_file.Decls.end())
+        return;
+
+    std::vector<swift::ASTNode> body;
+    std::for_each(tld_iter, src_file.Decls.end(),
+                  [&](swift::Decl *d)
+                  {
+                      assert(llvm::isa<swift::TopLevelCodeDecl>(d));
+                      auto *tld = llvm::dyn_cast<swift::TopLevelCodeDecl>(d);
+                      body.insert(body.end(),
+                                  tld->getBody()->getElements().begin(),
+                                  tld->getBody()->getElements().end());
+                      // TODO(sasha): We could potentially delete the
+                      //              BraceStmt and TopLevelCodeDecl nodes,
+                      //              but maybe not worth figuring out.
+                  });
+    src_file.Decls.erase(tld_iter, src_file.Decls.end());
+
+    swift::ASTContext &ast_ctx = src_file.getASTContext();
+    swift::BraceStmt *body_stmt = swift::BraceStmt::create(
+        ast_ctx, swift::SourceLoc(), body, swift::SourceLoc(), true);
+    swift::TopLevelCodeDecl *new_tld = new (ast_ctx) swift::TopLevelCodeDecl(
+        &src_file, body_stmt);
+    src_file.Decls.push_back(new_tld);
+}
 
 void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
 {
