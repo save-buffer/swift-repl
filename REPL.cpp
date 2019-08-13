@@ -2,6 +2,7 @@
 #include "Logging.h"
 #include "TransformAST.h"
 #include "TransformIR.h"
+#include "Config.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,8 +12,6 @@
 
 #include <swift/AST/ASTMangler.h>
 #include <swift/SILOptimizer/PassManager/Passes.h>
-
-#define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
 void ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
 {
@@ -112,6 +111,11 @@ std::string REPL::GetLine()
     return result;
 }
 
+void REPL::AddModuleSearchPath(std::string path)
+{
+    m_ast_ctx->addSearchPath(path, false, false);
+}
+
 bool REPL::IsExitString(const std::string &line)
 {
     return line == "e" || line == "exit";
@@ -172,7 +176,7 @@ bool REPL::ExecuteSwift(std::string line)
         Log("=========AST Before Modifications==========");
         tmp_src_file->dump();
     }
-    AddImportNodes(*tmp_src_file, m_modules);
+    AddImportNodes(*tmp_src_file, m_imports);
 
     swift::performNameBinding(*tmp_src_file);
     CHECK_ERROR();
@@ -191,6 +195,7 @@ bool REPL::ExecuteSwift(std::string line)
         Log("=========AST After Modification==========");
         tmp_src_file->dump();
     }
+    LoadImportedModules(*tmp_src_file);
 
     swift::FuncDecl *res_fn = nullptr;
     for(swift::Decl *decl : tmp_src_file->Decls)
@@ -238,7 +243,13 @@ bool REPL::ExecuteSwift(std::string line)
             src_file = new (*m_ast_ctx) swift::SourceFile(
                 *new_module, swift::SourceFileKind::Main, input.buffer_id,
                 implicit_import_kind, false);
-            m_modules.push_back(new_module_id);
+
+            swift::ImportDecl *new_module_import_decl = swift::ImportDecl::create(
+                *m_ast_ctx, src_file, swift::SourceLoc(),
+                swift::ImportKind::Module, swift::SourceLoc(),
+                { { new_module_id, swift::SourceLoc() } });
+            new_module_import_decl->setImplicit(true);
+            m_imports.push_back(new_module_import_decl);
         }
         else
         {
@@ -371,6 +382,15 @@ bool REPL::CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file)
     return true;
 }
 
+void REPL::LoadImportedModules(swift::SourceFile &src_file)
+{
+    for(swift::Decl *decl : src_file.Decls)
+    {
+        if(auto *import_decl = llvm::dyn_cast<swift::ImportDecl>(decl))
+            m_imports.push_back(import_decl);
+    }
+}
+
 // ModifyAST performs four modifications on AST:
 //    - Add global variable of same type as last expression.
 //    - Modify last expression to be assignment to this global variable.
@@ -416,8 +436,7 @@ void REPL::SetupLangOpts()
 
 void REPL::SetupSearchPathOpts()
 {
-    m_spath_opts.RuntimeResourcePath = "S:\\b\\swift\\lib\\swift";
-    m_spath_opts.SDKPath = "C:\\Library\\Developer\\Platforms\\Windows.platform\\Developer\\SDKs\\Windows.sdk";
+    AddModuleSearchPath(SWIFT_BUILTIN_MODULE_PATH);
 }
 
 void REPL::SetupSILOpts()
@@ -441,7 +460,7 @@ void REPL::SetupImporters()
     std::string module_cache_path;
     swift::ClangImporterOptions &clang_importer_opts =
         m_invocation.getClangImporterOptions();
-    clang_importer_opts.OverrideResourceDir = "S:\\b\\swift\\lib\\swift\\clang";
+    clang_importer_opts.OverrideResourceDir = SWIFT_CLANG_RESOURCE_DIR;
     std::unique_ptr<swift::ClangImporter> clang_importer;
     if(!clang_importer_opts.OverrideResourceDir.empty())
     {
@@ -452,7 +471,7 @@ void REPL::SetupImporters()
         }
         else
         {
-            clang_importer->addSearchPath("S:\\b\\swift\\lib\\swift\\shims", /* isFramework */ false, /* ifSystem */ true);
+            clang_importer->addSearchPath(SWIFT_SHIMS_RESOURCE_DIR, /* isFramework */ false, /* isSystem */ true);
             module_cache_path = swift::getModuleCachePathFromClang(clang_importer->getClangInstance());
             Log("Module Cache Path: " + module_cache_path);
         }
@@ -464,26 +483,11 @@ void REPL::SetupImporters()
         if(!ec)
             module_cache_path = path.str();
         else
-            module_cache_path = "C:\\Windows\\Temp\\SwiftModuleCache";
+            module_cache_path = DEFAULT_MODULE_CACHE_PATH;
     }
     constexpr swift::ModuleLoadingMode loading_mode = swift::ModuleLoadingMode::PreferSerialized;
     llvm::Triple triple(m_invocation.getTargetTriple());
-    std::string prebuilt_module_cache_path = SWIFT_MODULE_PATH;
-    auto memory_buffer_loader(swift::MemoryBufferSerializedModuleLoader::create(*m_ast_ctx,
-                                                                                tracker,
-                                                                                swift::ModuleLoadingMode::PreferSerialized)
-        );
-    auto stdlib_buffer = llvm::MemoryBuffer::getFile(SWIFT_MODULE_PATH "\\Swift.swiftmodule");
-    if(stdlib_buffer)
-        memory_buffer_loader->registerMemoryBuffer("Swift", std::move(stdlib_buffer.get()));
-    else
-        Log("Failed to load module Swift", LoggingPriority::Error);
-
-    if(memory_buffer_loader)
-        m_ast_ctx->addModuleLoader(std::move(memory_buffer_loader));
-    else
-        Log("Failed to load module Swift", LoggingPriority::Error);
-
+    std::string prebuilt_module_cache_path = SWIFT_BUILTIN_MODULE_PATH;
     if(loading_mode != swift::ModuleLoadingMode::OnlySerialized)
     {
         std::unique_ptr<swift::ModuleLoader> parseable_module_loader(

@@ -1,5 +1,6 @@
 #include "JIT.h"
 #include "Logging.h"
+#include "Config.h"
 
 llvm::Expected<std::unique_ptr<JIT>> JIT::Create()
 {
@@ -49,7 +50,7 @@ JIT::JIT(orc::JITTargetMachineBuilder machine_builder,
     if(!s_run_guard)
     {
         s_run_guard = true;
-        llvm::sys::DynamicLibrary::LoadLibraryPermanently("S:\\b\\swift\\bin\\swiftCore.dll");
+        llvm::sys::DynamicLibrary::LoadLibraryPermanently(SWIFT_WINDOWS_LIB_DIR "\\swiftCore.dll");
     }
 
     m_execution_session.getMainJITDylib().setGenerator(

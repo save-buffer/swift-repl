@@ -17,6 +17,7 @@ if(NOT DEFINED LIT_ARGS_DEFAULT)
 endif()
 
 add_custom_target(test COMMAND ${Python_EXECUTABLE} ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
+configure_file(Config.h.in Config.h)
 
 add_executable(swift-repl
   main.cpp
@@ -26,7 +27,7 @@ add_executable(swift-repl
   TransformIR.cpp
   CommandLineOptions.cpp
   Logging.cpp)
-target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
+target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(swift-repl PRIVATE
   LLVMExecutionEngine
   LLVMOrcJIT

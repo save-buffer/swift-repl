@@ -25,6 +25,7 @@ struct REPL
 {
     static llvm::Expected<std::unique_ptr<REPL>> Create(bool is_playground = false);
     std::string GetLine();
+    void AddModuleSearchPath(std::string path);
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
 
@@ -42,6 +43,7 @@ private:
     void RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &sil_module);
     llvm::Error UpdateFunctionPointers();
     bool CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file);
+    void LoadImportedModules(swift::SourceFile &src_file);
     void ModifyAST(swift::SourceFile &src_file);
     ReplInput AddToSrcMgr(const std::string &line);
     void SetupLangOpts();
@@ -89,7 +91,7 @@ private:
     using DeclMap = std::unordered_map<std::string, swift::SourceFile *>;
     DeclMap m_decl_map;
     std::unordered_map<std::string, std::string> m_fn_ptr_map;
-    std::vector<swift::Identifier> m_modules;
+    std::vector<swift::ImportDecl *> m_imports;
 
     std::unique_ptr<JIT> m_jit;
 };

@@ -1,4 +1,5 @@
 #include "CommandLineOptions.h"
+#include "Strings.h"
 
 #include <iostream>
 #include <string>
@@ -55,10 +56,25 @@ void SetPlaygroundOption(std::string opt, std::string val, CommandLineOptions &o
     opts.is_playground = is_playground == 1;
 }
 
+void HandleOptionWithoutEquals(std::string arg, CommandLineOptions &opts)
+{
+    // NOTE(sasha): The 2 comes from the length of "-i" or "-l"
+    if(StartsWith(arg, "-I"))
+        opts.include_paths.push_back(arg.substr(2));
+    else if(StartsWith(arg, "-L"))
+        opts.link_paths.push_back(arg.substr(sizeof(2)));
+    else
+        std::cout << "[Warning] Ignoring unrecognized parameter \"" << arg << "\"\n";
+}
+
 void ParseSingleCommandLineOption(std::string arg, CommandLineOptions &opts)
 {
     using OptionParseFn = std::add_pointer<void(std::string, std::string, CommandLineOptions &)>::type;
     auto delimeter_pos = arg.find("=");
+    if(delimeter_pos == std::string::npos)
+        return HandleOptionWithoutEquals(arg, opts);
+
+    ToLowerCase(arg);
     std::string opt = arg.substr(0, delimeter_pos);
     std::string val = arg.substr(delimeter_pos + 1, arg.size() - opt.size() - 1);
     llvm::StringSwitch<OptionParseFn>(opt)
@@ -84,7 +100,9 @@ CommandLineOptions ParseCommandLineOptions(int argc, char **argv)
     CommandLineOptions result;
     for(int i = 1; i < argc; i++)
     {
-        ParseSingleCommandLineOption(argv[i], result);
+        std::string sanitized_option = argv[i];
+        Trim(sanitized_option);
+        ParseSingleCommandLineOption(sanitized_option, result);
     }
     SetupDefaultsIfUninitialized(result);
     return result;
