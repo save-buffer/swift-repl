@@ -44,6 +44,17 @@ void SetLoggingPriorityOption(std::string opt, std::string val, CommandLineOptio
         opts.logging_opts.min_priority = priority;
 }
 
+void SetPlaygroundOption(std::string opt, std::string val, CommandLineOptions &opts)
+{
+    int is_playground = llvm::StringSwitch<int>(val)
+        .Case("true", 1)
+        .Case("false", 0)
+        .Default(-1);
+    if(is_playground == -1)
+        std::cout << "[Warning] is_playground is neither \"true\" nor \"false\". Defaulting to \"false\"\n";
+    opts.is_playground = is_playground == 1;
+}
+
 void ParseSingleCommandLineOption(std::string arg, CommandLineOptions &opts)
 {
     using OptionParseFn = std::add_pointer<void(std::string, std::string, CommandLineOptions &)>::type;
@@ -53,6 +64,7 @@ void ParseSingleCommandLineOption(std::string arg, CommandLineOptions &opts)
     llvm::StringSwitch<OptionParseFn>(opt)
         .Case("--logging", SetLoggingAreaOption)
         .Case("--logging_priority", SetLoggingPriorityOption)
+        .Case("--playground", SetPlaygroundOption)
         .Default(HandleUnknownOption)
         (opt, val, opts);
 }

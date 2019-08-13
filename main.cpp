@@ -4,17 +4,18 @@
 #include "CommandLineOptions.h"
 #include "REPL.h"
 
-void SetupOptions(int argc, char **argv)
+CommandLineOptions SetupOptions(int argc, char **argv)
 {
     CommandLineOptions opts = ParseCommandLineOptions(argc, argv);
     SetLoggingOptions(opts.logging_opts);
+    return opts;
 }
 
 int main(int argc, char **argv)
 {
-    SetupOptions(argc, argv);
+    CommandLineOptions opts = SetupOptions(argc, argv);
 
-    llvm::Expected<std::unique_ptr<REPL>> repl = REPL::Create();
+    llvm::Expected<std::unique_ptr<REPL>> repl = REPL::Create(opts.is_playground);
     if(!repl)
     {
         std::string err_str;
