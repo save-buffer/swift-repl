@@ -19,18 +19,22 @@
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
 #include <swift/SIL/SILModule.h>
 
+#include "Config.h"
 #include "JIT.h"
 
 struct REPL
 {
-    static llvm::Expected<std::unique_ptr<REPL>> Create(bool is_playground = false);
+    static llvm::Expected<std::unique_ptr<REPL>> Create(
+        bool is_playground = false,
+        std::string default_module_cache_path = DEFAULT_MODULE_CACHE_PATH);
     std::string GetLine();
     void AddModuleSearchPath(std::string path);
+    void AddLoadSearchPath(std::string path);
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
 
 protected:
-    explicit REPL(bool is_playground);
+    explicit REPL(bool is_playground, std::string default_module_cache_path);
 
 private:
     struct ReplInput
@@ -73,6 +77,7 @@ private:
     };
 
     const bool m_is_playground;
+    const std::string m_default_module_cache_path;
     uint64_t m_curr_input_number;
 
     swift::CompilerInvocation m_invocation;

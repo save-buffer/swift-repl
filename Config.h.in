@@ -12,4 +12,6 @@
     #define DEFAULT_MODULE_CACHE_PATH "C:\\Windows\\Temp\\SwiftModuleCache"
 #endif
 
+#define DYLIB_EXTENSION "@DYLIB_EXTENSION@"
+
 #endif

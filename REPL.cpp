@@ -60,9 +60,11 @@ void REPL::RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &llvm_modul
     }
 }
 
-llvm::Expected<std::unique_ptr<REPL>> REPL::Create(bool is_playground)
+llvm::Expected<std::unique_ptr<REPL>> REPL::Create(
+    bool is_playground,
+    std::string default_module_cache_path)
 {
-    std::unique_ptr<REPL> result(new REPL(is_playground));
+    std::unique_ptr<REPL> result(new REPL(is_playground, default_module_cache_path));
     auto jit = JIT::Create();
     SetCurrentLoggingArea(LoggingArea::JIT);
     if(!jit)
@@ -74,8 +76,10 @@ llvm::Expected<std::unique_ptr<REPL>> REPL::Create(bool is_playground)
     return std::unique_ptr<REPL>(std::move(result));
 }
 
-REPL::REPL(bool is_playground)
-    : m_is_playground(is_playground), m_curr_input_number(0),
+REPL::REPL(bool is_playground, std::string default_module_cache_path)
+    : m_is_playground(is_playground),
+      m_default_module_cache_path(default_module_cache_path),
+      m_curr_input_number(0),
       m_diagnostic_engine(m_src_mgr),
       m_ast_ctx(swift::ASTContext::get(m_lang_opts, m_spath_opts, m_src_mgr,
                                        m_diagnostic_engine))
@@ -114,6 +118,11 @@ std::string REPL::GetLine()
 void REPL::AddModuleSearchPath(std::string path)
 {
     m_ast_ctx->addSearchPath(path, false, false);
+}
+
+void REPL::AddLoadSearchPath(std::string path)
+{
+    m_jit->AddSearchPath(path);
 }
 
 bool REPL::IsExitString(const std::string &line)
@@ -196,6 +205,10 @@ bool REPL::ExecuteSwift(std::string line)
         tmp_src_file->dump();
     }
     LoadImportedModules(*tmp_src_file);
+    repl_module->collectLinkLibraries([&](swift::LinkLibrary library)
+                                      {
+                                          m_jit->AddDylib(library.getName().str());
+                                      });
 
     swift::FuncDecl *res_fn = nullptr;
     for(swift::Decl *decl : tmp_src_file->Decls)

@@ -16,6 +16,14 @@ if(NOT DEFINED LIT_ARGS_DEFAULT)
   set(LIT_ARGS_DEFAULT -v -vv)
 endif()
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+  set(DYLIB_EXTENSION ".dll")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  set(DYLIB_EXTENSION ".dylib")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+  set(DYLIB_EXTENSION ".so")
+endif()
+
 add_custom_target(test COMMAND ${Python_EXECUTABLE} ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
 configure_file(Config.h.in Config.h)
 
@@ -26,7 +34,8 @@ add_executable(swift-repl
   TransformAST.cpp
   TransformIR.cpp
   CommandLineOptions.cpp
-  Logging.cpp)
+  Logging.cpp
+  LibraryLoading.cpp)
 target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(swift-repl PRIVATE
   LLVMExecutionEngine

@@ -9,7 +9,8 @@ std::unique_ptr<REPL> SetupREPLWithOptions(int argc, char **argv)
     CommandLineOptions opts = ParseCommandLineOptions(argc, argv);
     SetLoggingOptions(opts.logging_opts);
 
-    llvm::Expected<std::unique_ptr<REPL>> repl = REPL::Create(opts.is_playground);
+    llvm::Expected<std::unique_ptr<REPL>> repl = REPL::Create(
+        opts.is_playground, opts.default_module_cache_path);
     if(!repl)
     {
         std::string err_str;
@@ -23,6 +24,8 @@ std::unique_ptr<REPL> SetupREPLWithOptions(int argc, char **argv)
 
     std::for_each(opts.include_paths.begin(), opts.include_paths.end(),
                   [&](auto s) { (*repl)->AddModuleSearchPath(s); });
+    std::for_each(opts.link_paths.begin(), opts.link_paths.end(),
+                  [&](auto s) { (*repl)->AddLoadSearchPath(s); });
     return std::move(*repl);
 }
 

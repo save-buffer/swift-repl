@@ -16,7 +16,9 @@ class JIT
 {
 public:
     static llvm::Expected<std::unique_ptr<JIT>> Create();
+    void AddSearchPath(std::string path);
     void AddModule(std::unique_ptr<llvm::Module> module);
+    bool AddDylib(std::string absolute_path);
     llvm::Expected<llvm::JITEvaluatedSymbol> LookupSymbol(llvm::StringRef symbol_name);
     // NOTE(sasha): Returns SymbolsNotFound Error if the symbol was not found
     //              Returns SymbolsCouldNotBeRemoved on failure to actually remove the symbol
