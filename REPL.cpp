@@ -116,10 +116,15 @@ bool REPL::ExecuteSwift(std::string line)
     m_invocation.getFrontendOptions().ModuleName = input.module_name.c_str();
     m_invocation.getIRGenOptions().ModuleName = input.module_name.c_str();
 
-    swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(
+    swift::SourceFile *tmp_src_file = new (*m_ast_ctx) swift::SourceFile(
         *module, swift::SourceFileKind::Main, input.buffer_id,
         implicit_import_kind);
-    module->addFile(*src_file);
+    if(!tmp_src_file)
+    {
+        Log("Unable to create SourceFile!", LoggingPriority::Error);
+        return false;
+    }
+    module->addFile(*tmp_src_file);
 
     CHECK_ERROR();
     swift::PersistentParserState persistent_state(*m_ast_ctx);
@@ -127,7 +132,7 @@ bool REPL::ExecuteSwift(std::string line)
     bool done = false;
     do
     {
-        swift::parseIntoSourceFile(*src_file,
+        swift::parseIntoSourceFile(*tmp_src_file,
                                    input.buffer_id,
                                    &done,
                                    nullptr /* SILParserState */,
@@ -140,34 +145,34 @@ bool REPL::ExecuteSwift(std::string line)
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========AST Before Modifications==========");
-        src_file->dump();
+        tmp_src_file->dump();
     }
-    AddImportNodes(*src_file, m_modules);
+    AddImportNodes(*tmp_src_file, m_modules);
     //TODO(sasha): Load DLLs
-    swift::performNameBinding(*src_file);
+    swift::performNameBinding(*tmp_src_file);
     CHECK_ERROR();
     swift::TopLevelContext top_level_context;
     swift::OptionSet<swift::TypeCheckingFlags> type_check_opts;
-    swift::performTypeChecking(*src_file, top_level_context, type_check_opts);
+    swift::performTypeChecking(*tmp_src_file, top_level_context, type_check_opts);
     
-    ModifyAST(*src_file);
+    ModifyAST(*tmp_src_file);
     
     //TODO(sasha): Perform playground transform?
     CHECK_ERROR();
-    swift::typeCheckExternalDefinitions(*src_file);
+    swift::typeCheckExternalDefinitions(*tmp_src_file);
     CHECK_ERROR();
 
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========AST After Modification==========");
-        src_file->dump();
+        tmp_src_file->dump();
     }
 
     std::unique_ptr<swift::SILModule> sil_module(
-        swift::performSILGeneration(*src_file,
+        swift::performSILGeneration(*tmp_src_file,
                                     m_invocation.getSILOptions()));
     CHECK_ERROR();
-    swift::FuncDecl *res_fn = ConfigureFunctionLinkage(*src_file, sil_module);
+    swift::FuncDecl *res_fn = ConfigureFunctionLinkage(*tmp_src_file, sil_module);
     swift::runSILDiagnosticPasses(*sil_module);
     CHECK_ERROR();
     SetCurrentLoggingArea(LoggingArea::SIL);
@@ -178,7 +183,7 @@ bool REPL::ExecuteSwift(std::string line)
     }
     CHECK_ERROR();
     std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
-                                                                         *src_file,
+                                                                         *tmp_src_file,
                                                                          std::move(sil_module),
                                                                          "swift_repl_module",
                                                                          swift::PrimarySpecificPaths("", input.module_name),
