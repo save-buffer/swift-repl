@@ -1,6 +1,0 @@
-#!/usr/bin/env python
-import os
-import sys
-llvm_lit = os.path.join('@LLVM_TOOLS_BINARY_DIR@', 'llvm-lit.py')
-sys.argv = [llvm_lit, '@SwiftREPL_TESTS_DIR@', '-v', '-vv']
-execfile(llvm_lit)
