@@ -1,0 +1,16 @@
+# -*- Python -*-
+
+import os
+import sys
+
+import lit.util
+import lit.formats
+
+config.name = 'Swift REPL'
+config.test_format = lit.formats.ShTest()
+config.test_source_root = os.path.dirname(__file__)
+config.suffixes = ['.test']
+config.substitutions = [
+    ('%swift-repl', os.path.join('@CMAKE_BINARY_DIR@', 'swift-repl.exe')),
+    ('%FileCheck', os.path.join('@LLVM_BINARY_DIR@', 'bin', 'FileCheck.exe')),
+]

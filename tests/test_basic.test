@@ -1,0 +1,10 @@
+# RUN: cat %s | %swift-repl --logging_priority=none | %FileCheck %s
+1+1
+2+2
+"HI"
+(a: 5, b: 6)
+e
+# CHECK: 2
+# CHECK: 4
+# CHECK: HI
+# CHECK: (a: 5, b: 6)

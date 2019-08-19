@@ -1,0 +1,17 @@
+# RUN: cat %s | %swift-repl --logging_priority=none | %FileCheck %s
+let a = 5
+a
+let b : UInt = 10
+b
+var c = 0
+c
+c += 1
+c
+c += 1
+c
+e
+# CHECK: 5
+# CHECK: 10
+# CHECK: 0
+# CHECK: 1
+# CHECK: 2

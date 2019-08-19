@@ -6,6 +6,7 @@
 struct CommandLineOptions
 {
     LoggingOptions logging_opts;
+    bool is_playground;
 };
 
 CommandLineOptions ParseCommandLineOptions(int argc, char **argv);

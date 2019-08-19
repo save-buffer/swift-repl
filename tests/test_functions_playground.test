@@ -1,0 +1,14 @@
+# RUN: cat %s | %swift-repl --logging_priority=none --playground=true | %FileCheck %s
+func a() -> Int { return 5 }
+a()
+func b() { print(a()) }
+b()
+func a() -> Int { return 10 }
+a()
+b()
+e
+# CHECK: 5
+# CHECK: 5
+# CHECK: Invalid redeclaration of a
+# CHECK: 5
+# CHECK: 5
