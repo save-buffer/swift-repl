@@ -7,9 +7,15 @@ find_package(Swift CONFIG REQUIRED)
 find_package(Clang CONFIG REQUIRED)
 
 set(SwiftREPL_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests)
+set(LIT ${LLVM_TOOLS_BINARY_DIR}/llvm-lit.py)
 
 configure_file(${SwiftREPL_TESTS_DIR}/lit.cfg.py.in ${SwiftREPL_TESTS_DIR}/lit.cfg.py)
-configure_file(test.py.in test.py)
+
+if(NOT DEFINED LIT_ARGS_DEFAULT)
+  set(LIT_ARGS_DEFAULT -v -vv)
+endif()
+
+add_custom_target(test COMMAND ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
 
 add_executable(swift-repl
   main.cpp
