@@ -1,8 +1,11 @@
 #include "REPL.h"
 #include "Logging.h"
 #include "TransformAST.h"
+#include "TransformIR.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <string>
 #include <tuple>
 #include <type_traits>
 
@@ -11,14 +14,10 @@
 
 #define SWIFT_MODULE_PATH "S:\\b\\swift\\lib\\swift\\windows\\x86_64"
 
-// Returns expression function and result global variable
-swift::FuncDecl *ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
+void ConfigureFunctionLinkage(swift::SourceFile &src_file, std::unique_ptr<swift::SILModule> &sil_module)
 {
     SetCurrentLoggingArea(LoggingArea::SIL);
 
-    swift::FuncDecl *res_fn = nullptr;
-
-    const std::string res_fn_name = src_file.getFilename().str();
     for(swift::Decl *decl : src_file.Decls)
     {
         assert(decl);
@@ -31,18 +30,40 @@ swift::FuncDecl *ConfigureFunctionLinkage(swift::SourceFile &src_file, std::uniq
 
             sil_module->lookUpFunction(sil_decl)->setLinkage(swift::SILLinkage::Public);
             Log(std::string("Set function ") + name_original + " (" + name_mangled + ") to public");
-
-            if(name_original == res_fn_name)
-                res_fn = fn;
         }
     }
     sil_module->lookUpFunction("main")->setLinkage(swift::SILLinkage::Private);
-    return res_fn;
 }
 
-llvm::Expected<std::unique_ptr<REPL>> REPL::Create()
+void REPL::RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &llvm_module)
 {
-    std::unique_ptr<REPL> result(new REPL);
+    SetCurrentLoggingArea(LoggingArea::SIL);
+
+    for(const llvm::Function &fn : llvm_module->functions())
+    {
+        if(fn.isDeclaration() || !fn.hasExternalLinkage())
+            continue;
+        std::string name = fn.getName().str();
+
+        if(llvm::Error err = m_jit->RemoveSymbol(name))
+        {
+            SetCurrentLoggingArea(LoggingArea::JIT);
+            llvm::handleAllErrors(std::move(err),
+                                  [&](const llvm::orc::SymbolsCouldNotBeRemoved &)
+                                  {
+                                      Log((llvm::Twine("Could not remove symbol") + name).str(), LoggingPriority::Error);
+                                  },
+                                  [](const llvm::orc::SymbolsNotFound &) { /* pass */ });
+        }
+
+        if(m_fn_ptr_map.find(name) == m_fn_ptr_map.end())
+            m_fn_ptr_map[name] = "";
+    }
+}
+
+llvm::Expected<std::unique_ptr<REPL>> REPL::Create(bool is_playground)
+{
+    std::unique_ptr<REPL> result(new REPL(is_playground));
     auto jit = JIT::Create();
     SetCurrentLoggingArea(LoggingArea::JIT);
     if(!jit)
@@ -54,12 +75,11 @@ llvm::Expected<std::unique_ptr<REPL>> REPL::Create()
     return std::unique_ptr<REPL>(std::move(result));
 }
 
-REPL::REPL() : m_curr_input_number(0),
-               m_diagnostic_engine(m_src_mgr),
-               m_ast_ctx(swift::ASTContext::get(m_lang_opts,
-                                                m_spath_opts,
-                                                m_src_mgr,
-                                                m_diagnostic_engine))
+REPL::REPL(bool is_playground)
+    : m_is_playground(is_playground), m_curr_input_number(0),
+      m_diagnostic_engine(m_src_mgr),
+      m_ast_ctx(swift::ASTContext::get(m_lang_opts, m_spath_opts, m_src_mgr,
+                                       m_diagnostic_engine))
 {
     static bool s_run_guard = false;
     if(!s_run_guard)
@@ -97,29 +117,39 @@ bool REPL::IsExitString(const std::string &line)
     return line == "e" || line == "exit";
 }
 
+// NOTE(sasha): We don't use the normal logging system here because the
+//              DiagnosticEngine will have shown the error.
+// TODO(sasha): Make this not print to stdout
+#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return true; }
+#define PRINT_INVALID_REDECLARATION(name) { std::cout << "Invalid redeclaration of " << name << "\n"; return true; }
+
 bool REPL::ExecuteSwift(std::string line)
 {
-    //NOTE(sasha): We don't use the normal logging system here because the
-    //             DiagnosticEngine will show have showed the error.
-#define CHECK_ERROR() if(m_diagnostic_engine.hadAnyError()) { return true; }
     m_diagnostic_engine.resetHadAnyError();
 
     if(IsExitString(line))
         return false;
 
+    swift::Mangle::ASTMangler mangler;
+
     ReplInput input = AddToSrcMgr(line);
-    auto module_id = m_ast_ctx->getIdentifier(input.module_name);
-    auto *module = swift::ModuleDecl::create(module_id, *m_ast_ctx);
+    auto repl_module_id = m_ast_ctx->getIdentifier("__REPL__");
+    auto *repl_module = swift::ModuleDecl::create(repl_module_id, *m_ast_ctx);
     CHECK_ERROR();
     constexpr auto implicit_import_kind =
         swift::SourceFile::ImplicitModuleImportKind::Stdlib;
     m_invocation.getFrontendOptions().ModuleName = input.module_name.c_str();
     m_invocation.getIRGenOptions().ModuleName = input.module_name.c_str();
 
-    swift::SourceFile *src_file = new (*m_ast_ctx) swift::SourceFile(
-        *module, swift::SourceFileKind::Main, input.buffer_id,
+    swift::SourceFile *tmp_src_file = new (*m_ast_ctx) swift::SourceFile(
+        *repl_module, swift::SourceFileKind::Main, input.buffer_id,
         implicit_import_kind);
-    module->addFile(*src_file);
+    if(!tmp_src_file)
+    {
+        Log("Unable to create SourceFile!", LoggingPriority::Error);
+        return false;
+    }
+    repl_module->addFile(*tmp_src_file);
 
     CHECK_ERROR();
     swift::PersistentParserState persistent_state(*m_ast_ctx);
@@ -127,7 +157,7 @@ bool REPL::ExecuteSwift(std::string line)
     bool done = false;
     do
     {
-        swift::parseIntoSourceFile(*src_file,
+        swift::parseIntoSourceFile(*tmp_src_file,
                                    input.buffer_id,
                                    &done,
                                    nullptr /* SILParserState */,
@@ -140,34 +170,150 @@ bool REPL::ExecuteSwift(std::string line)
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========AST Before Modifications==========");
-        src_file->dump();
+        tmp_src_file->dump();
     }
-    AddImportNodes(*src_file, m_modules);
-    //TODO(sasha): Load DLLs
-    swift::performNameBinding(*src_file);
+    AddImportNodes(*tmp_src_file, m_modules);
+
+    swift::performNameBinding(*tmp_src_file);
     CHECK_ERROR();
     swift::TopLevelContext top_level_context;
     swift::OptionSet<swift::TypeCheckingFlags> type_check_opts;
-    swift::performTypeChecking(*src_file, top_level_context, type_check_opts);
+    swift::performTypeChecking(*tmp_src_file, top_level_context, type_check_opts);
     
-    ModifyAST(*src_file);
+    ModifyAST(*tmp_src_file);
     
-    //TODO(sasha): Perform playground transform?
     CHECK_ERROR();
-    swift::typeCheckExternalDefinitions(*src_file);
+    swift::typeCheckExternalDefinitions(*tmp_src_file);
     CHECK_ERROR();
 
     if(ShouldLog(LoggingPriority::Info))
     {
         Log("=========AST After Modification==========");
-        src_file->dump();
+        tmp_src_file->dump();
     }
 
+    swift::FuncDecl *res_fn = nullptr;
+    for(swift::Decl *decl : tmp_src_file->Decls)
+    {
+        if(!llvm::isa<swift::ValueDecl>(decl))
+            continue;
+
+        swift::ValueDecl *v_decl = llvm::dyn_cast<swift::ValueDecl>(decl);
+        std::string unmangled_name = "";
+        std::string name = "";
+        // NOTE(sasha): Two functions can have the same unmangled name, but no other
+        //              pair declaration types can have the same unmangled name
+        //              (e.g. Function-Variable, Class-Variable, Function-Class are
+        //               all not allowed. Only Function-Function is allowed).
+        if(swift::FuncDecl *fn_decl = llvm::dyn_cast<swift::FuncDecl>(v_decl))
+        {
+            unmangled_name = fn_decl->getName().str();
+            if(unmangled_name == input.module_name)
+                res_fn = fn_decl;
+
+            name = mangler.mangleEntity(v_decl, false);
+            if(m_decl_map.find(unmangled_name) != m_decl_map.end())
+            {
+                assert(m_decl_map[unmangled_name]->Decls.size() == 1);
+                if(!llvm::isa<swift::FuncDecl>(m_decl_map[unmangled_name]->Decls[0]))
+                    PRINT_INVALID_REDECLARATION(unmangled_name);
+            }
+            // Don't allow redefinitions of any kind in playgrounds
+            if(m_is_playground && m_decl_map.find(name) != m_decl_map.end())
+                PRINT_INVALID_REDECLARATION(unmangled_name);
+        }
+        else
+        {
+            unmangled_name = v_decl->getBaseName().getIdentifier().str();
+            name = unmangled_name;
+            if(m_decl_map.find(name) != m_decl_map.end())
+                PRINT_INVALID_REDECLARATION(name);
+        }
+        swift::Identifier new_module_id = m_ast_ctx->getIdentifier(name);
+        swift::ModuleDecl *new_module = swift::ModuleDecl::create(new_module_id,
+                                                                  *m_ast_ctx);
+        swift::SourceFile *src_file;
+        if(m_decl_map.find(name) == m_decl_map.end())
+        {
+            src_file = new (*m_ast_ctx) swift::SourceFile(
+                *new_module, swift::SourceFileKind::Main, input.buffer_id,
+                implicit_import_kind, false);
+            m_modules.push_back(new_module_id);
+        }
+        else
+        {
+            src_file = m_decl_map[name];
+        }
+
+        m_ast_ctx->LoadedModules[new_module_id] = new_module;
+        m_decl_map[unmangled_name] = src_file;
+        m_decl_map[name] = src_file;
+        new_module->addFile(*src_file);
+        src_file->Decls = { decl };
+        src_file->ASTStage = swift::SourceFile::ASTStage_t::TypeChecked;
+
+        if(ShouldLog(LoggingPriority::Info))
+        {
+            Log(std::string("=========AST for ") + name + "==========");
+            src_file->dump();
+        }
+
+        if(!CompileSourceFileToIRAndAddToJIT(*src_file))
+            return true;
+    }
+
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    if(res_fn)
+    {
+        std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
+
+        using ReplFn = std::add_pointer<void()>::type;
+        ReplFn result_fn = nullptr;
+        if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
+        {
+            result_fn = reinterpret_cast<ReplFn>(symbol->getAddress());
+            Log(std::string("Loaded function ") + mangled_fn_name);
+            result_fn();
+        }
+        else
+        {
+            Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
+            return false;
+        }
+    }
+    return true;
+}
+
+llvm::Error REPL::UpdateFunctionPointers()
+{
+    for(const auto &name : m_fn_ptr_map)
+    {
+        auto fn = m_jit->LookupSymbol(name.first);
+        if(fn)
+        {
+            auto ptr = m_jit->LookupSymbol(name.second);
+            if(ptr)
+                *reinterpret_cast<std::uintptr_t *>(ptr->getAddress()) =
+                    static_cast<std::uintptr_t>(fn->getAddress());
+            else
+                return ptr.takeError();
+        }
+        else
+        {
+            return fn.takeError();
+        }
+    }
+    return llvm::Error::success();
+}
+
+
+bool REPL::CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file)
+{
     std::unique_ptr<swift::SILModule> sil_module(
-        swift::performSILGeneration(*src_file,
+        swift::performSILGeneration(src_file,
                                     m_invocation.getSILOptions()));
     CHECK_ERROR();
-    swift::FuncDecl *res_fn = ConfigureFunctionLinkage(*src_file, sil_module);
+    ConfigureFunctionLinkage(src_file, sil_module);
     swift::runSILDiagnosticPasses(*sil_module);
     CHECK_ERROR();
     SetCurrentLoggingArea(LoggingArea::SIL);
@@ -178,12 +324,11 @@ bool REPL::ExecuteSwift(std::string line)
     }
     CHECK_ERROR();
     std::unique_ptr<llvm::Module> llvm_module(swift::performIRGeneration(m_invocation.getIRGenOptions(),
-                                                                         *src_file,
+                                                                         src_file,
                                                                          std::move(sil_module),
                                                                          "swift_repl_module",
-                                                                         swift::PrimarySpecificPaths("", input.module_name),
+                                                                         swift::PrimarySpecificPaths(),
                                                                          m_llvm_ctx));
-
     SetCurrentLoggingArea(LoggingArea::IR);
     if(ShouldLog(LoggingPriority::Info))
     {
@@ -199,33 +344,31 @@ bool REPL::ExecuteSwift(std::string line)
         Log(llvm_ir);
     }
 
-    SetCurrentLoggingArea(LoggingArea::JIT);
+    RemoveRedeclarationsFromJIT(llvm_module);
+    AddFunctionPointers(llvm_module, m_jit, m_llvm_ctx, m_fn_ptr_map);
+    ReplaceFunctionCallsWithIndirectFunctionCalls(llvm_module,
+                                                  m_llvm_ctx,
+                                                  m_fn_ptr_map);
+
+    SetCurrentLoggingArea(LoggingArea::IR);
+    if(ShouldLog(LoggingPriority::Info))
+    {
+        std::string llvm_ir;
+        llvm::raw_string_ostream str_stream(llvm_ir);
+        str_stream << "=========New LLVM IR==========\n";
+        llvm_module->print(str_stream, nullptr);
+        str_stream.flush();
+        Log(llvm_ir);
+    }
+
     m_jit->AddModule(std::move(llvm_module));
 
-    if(res_fn)
+    if(UpdateFunctionPointers())
     {
-        swift::Mangle::ASTMangler mangler;
-        std::string mangled_fn_name = mangler.mangleEntity(res_fn, false);
-
-        using IntFn = std::add_pointer<uint64_t()>::type;
-        IntFn result_fn = nullptr;
-        uint64_t *result =  nullptr;
-        if(auto symbol = m_jit->LookupSymbol(mangled_fn_name))
-        {
-            result_fn = reinterpret_cast<IntFn>(symbol->getAddress());
-            Log(std::string("Loaded function ") + mangled_fn_name);
-        }
-        else
-        {
-            Log(std::string("Failed to load function ") + mangled_fn_name, LoggingPriority::Error);
-            return false;
-        }
-        result_fn();
+        Log("Unable to update function pointers", LoggingPriority::Error);
+        return false;
     }
-    m_modules.push_back(module_id);
-    m_ast_ctx->LoadedModules[module_id] = module;
     return true;
-#undef CHECK_ERROR
 }
 
 // ModifyAST performs four modifications on AST:
@@ -263,6 +406,7 @@ void REPL::SetupLangOpts()
     m_lang_opts.Target.setOS(llvm::Triple::OSType::Win32);
     m_lang_opts.Target.setEnvironment(llvm::Triple::EnvironmentType::MSVC);
     m_lang_opts.Target.setObjectFormat(llvm::Triple::ObjectFormatType::COFF);
+    m_lang_opts.EnableObjCInterop = false;
     m_lang_opts.EnableDollarIdentifiers = true;
     m_lang_opts.EnableAccessControl = true;
     m_lang_opts.EnableTargetOSChecking = false;

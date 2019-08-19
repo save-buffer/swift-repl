@@ -18,6 +18,10 @@ public:
     static llvm::Expected<std::unique_ptr<JIT>> Create();
     void AddModule(std::unique_ptr<llvm::Module> module);
     llvm::Expected<llvm::JITEvaluatedSymbol> LookupSymbol(llvm::StringRef symbol_name);
+    // NOTE(sasha): Returns SymbolsNotFound Error if the symbol was not found
+    //              Returns SymbolsCouldNotBeRemoved on failure to actually remove the symbol
+    //              Returns Error::success() on success, does nothing on failure.
+    llvm::Error RemoveSymbol(llvm::StringRef symbol_name);
 
 private:
     JIT(orc::JITTargetMachineBuilder machine_builder, llvm::DataLayout data_layout);

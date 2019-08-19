@@ -23,9 +23,16 @@ void JIT::AddModule(std::unique_ptr<llvm::Module> module)
 llvm::Expected<llvm::JITEvaluatedSymbol> JIT::LookupSymbol(llvm::StringRef symbol_name)
 {
     SetCurrentLoggingArea(LoggingArea::JIT);
-    Log(std::string("Looking up symbol ") + symbol_name.str());
+    Log((llvm::Twine("Looking up symbol ") + symbol_name).str());
     return m_execution_session.lookup({ &m_execution_session.getMainJITDylib() },
                                       m_mangler(symbol_name.str()));
+}
+
+llvm::Error JIT::RemoveSymbol(llvm::StringRef symbol_name)
+{
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    Log(std::string("Removing symbol ") + symbol_name.str());
+    return m_execution_session.getMainJITDylib().remove({ m_execution_session.intern(symbol_name.str()) });
 }
 
 JIT::JIT(orc::JITTargetMachineBuilder machine_builder,
