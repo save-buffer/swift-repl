@@ -5,6 +5,7 @@ project(swift-repl LANGUAGES CXX)
 find_package(LLVM CONFIG REQUIRED)
 find_package(Swift CONFIG REQUIRED)
 find_package(Clang CONFIG REQUIRED)
+find_package(Python COMPONENTS Interpreter)
 
 set(SwiftREPL_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests)
 set(LIT ${LLVM_TOOLS_BINARY_DIR}/llvm-lit.py)
@@ -15,7 +16,7 @@ if(NOT DEFINED LIT_ARGS_DEFAULT)
   set(LIT_ARGS_DEFAULT -v -vv)
 endif()
 
-add_custom_target(test COMMAND ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
+add_custom_target(test COMMAND ${Python_EXECUTABLE} ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
 
 add_executable(swift-repl
   main.cpp
