@@ -463,7 +463,6 @@ void REPL::SetupIROpts()
 {
     swift::IRGenOptions &ir_opts = m_invocation.getIRGenOptions();
     ir_opts.OutputKind = swift::IRGenOutputKind::Module;
-    ir_opts.UseJIT = true;
 }
 
 void REPL::SetupImporters()

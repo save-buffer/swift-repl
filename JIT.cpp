@@ -3,6 +3,8 @@
 #include "Config.h"
 #include "LibraryLoading.h"
 
+#include <vector>
+
 llvm::Expected<std::unique_ptr<JIT>> JIT::Create()
 {
     auto machine_builder = orc::JITTargetMachineBuilder::detectHost();
@@ -56,6 +58,48 @@ llvm::Error JIT::RemoveSymbol(llvm::StringRef symbol_name)
     return m_execution_session.getMainJITDylib().remove({ m_execution_session.intern(symbol_name.str()) });
 }
 
+orc::SymbolNameSet JIT::SymbolGenerator::operator()(orc::JITDylib &jd, const orc::SymbolNameSet &names)
+{
+    orc::SymbolNameSet imps;
+    orc::SymbolNameSet non_imps;
+    for(auto &name : names)
+    {
+        if((*name).startswith("__imp_"))
+            imps.insert(name);
+        else
+            non_imps.insert(name);
+    }
+
+    orc::SymbolNameSet added = m_search(jd, non_imps);
+    orc::SymbolMap new_symbols;
+
+    for(auto &_imp : imps)
+    {
+        auto imp = *_imp;
+        llvm::StringRef base = imp.substr(strlen("__imp_"));
+        if(auto symb = m_jit.LookupSymbol(base))
+        {
+            std::uintptr_t address = reinterpret_cast<std::uintptr_t>(symb->getAddress());
+            m_imps.push_back(new std::uintptr_t(address));
+
+            auto interned_imp = m_jit.m_execution_session.intern(imp.str());
+            new_symbols[interned_imp] =
+                llvm::JITEvaluatedSymbol(llvm::pointerToJITTargetAddress(m_imps.back()),
+                                        llvm::JITSymbolFlags::Exported);
+            added.insert(interned_imp);
+        }
+    }
+    if(!new_symbols.empty())
+        cantFail(jd.define(orc::absoluteSymbols(std::move(new_symbols))));
+    return added;
+}
+
+JIT::SymbolGenerator::~SymbolGenerator()
+{
+    for(std::uintptr_t *p : m_imps)
+        delete p;
+}
+
 JIT::JIT(orc::JITTargetMachineBuilder machine_builder,
          llvm::DataLayout data_layout) : m_object_layer(m_execution_session,
                                                         []() { return std::make_unique<llvm::SectionMemoryManager>(); }),
@@ -64,9 +108,10 @@ JIT::JIT(orc::JITTargetMachineBuilder machine_builder,
                                                          orc::ConcurrentIRCompiler(std::move(machine_builder))),
                                          m_data_layout(std::move(data_layout)),
                                          m_mangler(m_execution_session, m_data_layout),
-                                         m_ctx(std::make_unique<llvm::LLVMContext>())
+                                         m_ctx(std::make_unique<llvm::LLVMContext>()),
+                                         m_generator(*this, m_data_layout)
 {
-    m_execution_session.getMainJITDylib().setGenerator(
-        llvm::cantFail(orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(data_layout)));
+    m_execution_session.getMainJITDylib().setGenerator(m_generator);
     m_object_layer.setOverrideObjectFlagsWithResponsibilityFlags(true);
+    m_object_layer.setAutoClaimResponsibilityForObjectSymbols(true);
 }
