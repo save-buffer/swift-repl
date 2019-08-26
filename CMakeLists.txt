@@ -27,8 +27,9 @@ endif()
 add_custom_target(test COMMAND ${Python_EXECUTABLE} ${LIT} ${SwiftREPL_TESTS_DIR} ${LIT_ARGS_DEFAULT})
 configure_file(Config.h.in Config.h)
 
-add_executable(swift-repl
-  main.cpp
+set(ALL_INCLUDE_DIRS ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
+
+add_library(REPL STATIC
   REPL.cpp
   JIT.cpp
   TransformAST.cpp
@@ -36,8 +37,8 @@ add_executable(swift-repl
   CommandLineOptions.cpp
   Logging.cpp
   LibraryLoading.cpp)
-target_include_directories(swift-repl PRIVATE ${SWIFT_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(swift-repl PRIVATE
+target_include_directories(REPL PRIVATE ${ALL_INCLUDE_DIRS})
+target_link_libraries(REPL PRIVATE
   LLVMExecutionEngine
   LLVMOrcJIT
   swiftAST
@@ -50,3 +51,10 @@ target_link_libraries(swift-repl PRIVATE
   swiftSIL
   swiftSyntax
   swiftSyntaxParse)
+
+add_executable(swift-repl swift-repl.cpp)
+target_include_directories(swift-repl PRIVATE ${ALL_INCLUDE_DIRS})
+target_link_libraries(swift-repl PRIVATE REPL)
+
+add_dependencies(swift-repl REPL)
+add_dependencies(test swift-repl)
