@@ -56,5 +56,15 @@ add_executable(swift-repl swift-repl.cpp)
 target_include_directories(swift-repl PRIVATE ${ALL_INCLUDE_DIRS})
 target_link_libraries(swift-repl PRIVATE REPL)
 
+add_executable(swift-playground swift-playground.cpp)
+target_include_directories(swift-playground PRIVATE ${ALL_INCLUDE_DIRS})
+target_link_libraries(swift-playground PRIVATE
+  REPL
+  Kernel32
+  User32
+  Gdi32
+  Msvcrt)
+
 add_dependencies(swift-repl REPL)
+add_dependencies(swift-playground REPL)
 add_dependencies(test swift-repl)
