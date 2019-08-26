@@ -12,21 +12,9 @@
 #include "TransformAST.h"
 
 void AddImportNodes(swift::SourceFile &src_file,
-                    const std::vector<swift::Identifier> &modules)
+                    const std::vector<swift::ImportDecl *> &import_decls)
 {
     swift::ASTContext &ast_ctx = src_file.getASTContext();
-    std::vector<swift::Decl *> import_decls;
-    std::transform(modules.begin(), modules.end(),
-                   std::back_inserter(import_decls),
-                   [&](const swift::Identifier &module)
-                   {
-                       auto result = swift::ImportDecl::create(
-                           ast_ctx, &src_file, swift::SourceLoc(),
-                           swift::ImportKind::Module, swift::SourceLoc(),
-                           { { module, swift::SourceLoc() } });
-                       result->setImplicit(true);
-                       return result;
-                   });
     src_file.Decls.insert(src_file.Decls.begin(),
                           import_decls.begin(), import_decls.end());
 }

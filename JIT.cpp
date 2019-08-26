@@ -1,5 +1,7 @@
 #include "JIT.h"
 #include "Logging.h"
+#include "Config.h"
+#include "LibraryLoading.h"
 
 llvm::Expected<std::unique_ptr<JIT>> JIT::Create()
 {
@@ -14,10 +16,29 @@ llvm::Expected<std::unique_ptr<JIT>> JIT::Create()
     return std::unique_ptr<JIT>(new JIT(std::move(*machine_builder), std::move(*data_layout)));
 }
 
+void JIT::AddSearchPath(std::string path)
+{
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    Log(std::string("Adding ") + path + " to dynamic library search path");
+    AddLibrarySearchPath(path);
+}
+
 void JIT::AddModule(std::unique_ptr<llvm::Module> module)
 {
     llvm::cantFail(m_compile_layer.add(m_execution_session.getMainJITDylib(),
                                        orc::ThreadSafeModule(std::move(module), m_ctx)));
+}
+
+bool JIT::AddDylib(std::string name)
+{
+    SetCurrentLoggingArea(LoggingArea::JIT);
+    bool result = SearchForAndLoadLibraryPermanently(name);
+
+    if(result)
+        Log(std::string("Successfully loaded dynamic library ") + name);
+    else
+        Log(std::string("Failed to load dynamic library ") + name, LoggingPriority::Warning);
+    return result;
 }
 
 llvm::Expected<llvm::JITEvaluatedSymbol> JIT::LookupSymbol(llvm::StringRef symbol_name)
@@ -45,13 +66,6 @@ JIT::JIT(orc::JITTargetMachineBuilder machine_builder,
                                          m_mangler(m_execution_session, m_data_layout),
                                          m_ctx(std::make_unique<llvm::LLVMContext>())
 {
-    static bool s_run_guard = false;
-    if(!s_run_guard)
-    {
-        s_run_guard = true;
-        llvm::sys::DynamicLibrary::LoadLibraryPermanently("S:\\b\\swift\\bin\\swiftCore.dll");
-    }
-
     m_execution_session.getMainJITDylib().setGenerator(
         llvm::cantFail(orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(data_layout)));
     m_object_layer.setOverrideObjectFlagsWithResponsibilityFlags(true);

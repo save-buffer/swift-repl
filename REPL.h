@@ -19,17 +19,22 @@
 #include <swift/Frontend/ParseableInterfaceModuleLoader.h>
 #include <swift/SIL/SILModule.h>
 
+#include "Config.h"
 #include "JIT.h"
 
 struct REPL
 {
-    static llvm::Expected<std::unique_ptr<REPL>> Create(bool is_playground = false);
+    static llvm::Expected<std::unique_ptr<REPL>> Create(
+        bool is_playground = false,
+        std::string default_module_cache_path = DEFAULT_MODULE_CACHE_PATH);
     std::string GetLine();
+    void AddModuleSearchPath(std::string path);
+    void AddLoadSearchPath(std::string path);
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);
 
 protected:
-    explicit REPL(bool is_playground);
+    explicit REPL(bool is_playground, std::string default_module_cache_path);
 
 private:
     struct ReplInput
@@ -42,6 +47,7 @@ private:
     void RemoveRedeclarationsFromJIT(std::unique_ptr<llvm::Module> &sil_module);
     llvm::Error UpdateFunctionPointers();
     bool CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file);
+    void LoadImportedModules(swift::SourceFile &src_file);
     void ModifyAST(swift::SourceFile &src_file);
     ReplInput AddToSrcMgr(const std::string &line);
     void SetupLangOpts();
@@ -71,6 +77,7 @@ private:
     };
 
     const bool m_is_playground;
+    const std::string m_default_module_cache_path;
     uint64_t m_curr_input_number;
 
     swift::CompilerInvocation m_invocation;
@@ -89,7 +96,7 @@ private:
     using DeclMap = std::unordered_map<std::string, swift::SourceFile *>;
     DeclMap m_decl_map;
     std::unordered_map<std::string, std::string> m_fn_ptr_map;
-    std::vector<swift::Identifier> m_modules;
+    std::vector<swift::ImportDecl *> m_imports;
 
     std::unique_ptr<JIT> m_jit;
 };
