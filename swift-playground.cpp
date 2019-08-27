@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <mutex>
 
 #include "CommandLineOptions.h"
 #include "REPL.h"
@@ -9,8 +10,17 @@
 #include <windowsx.h>
 #include <winuser.h>
 #include <richedit.h>
+#include <namedpipeapi.h>
+#include <io.h>
+#include <fcntl.h>
 
 CommandLineOptions g_opts;
+
+HANDLE g_stdout_write_pipe;
+HANDLE g_stdout_read_pipe;
+HWND g_output;
+std::vector<char> g_output_text;
+std::mutex g_output_text_lock;
 
 void SetFontToConsolas(HWND window_handle)
 {
@@ -65,6 +75,33 @@ std::string GetTextboxText(HWND textbox)
     GETTEXTEX get_text_info = { static_cast<DWORD>(buff_size), GT_DEFAULT, CP_ACP, nullptr, nullptr };
     SendMessage(textbox, EM_GETTEXTEX, reinterpret_cast<WPARAM>(&get_text_info), reinterpret_cast<LPARAM>(buff.data()));
     return std::string(buff.data());
+}
+
+unsigned long UpdateOutputTextbox(void *)
+{
+    for(;;)
+    {
+        char buff[128];
+        DWORD bytes_read;
+        ReadFile(g_stdout_read_pipe, buff, sizeof(buff), &bytes_read, nullptr);
+
+        {
+            std::lock_guard<std::mutex> guard(g_output_text_lock);
+            g_output_text.insert(g_output_text.end(),
+                                 buff, buff + bytes_read);
+            g_output_text.push_back('\0');
+            Edit_SetText(g_output, g_output_text.data());
+            g_output_text.pop_back();
+        }
+    }
+}
+
+void ClearOutputTextBox()
+{
+    std::lock_guard<std::mutex> guard(g_output_text_lock);
+    g_output_text.clear();
+    char null_char = '\0';
+    Edit_SetText(g_output, &null_char);
 }
 
 struct Playground
@@ -128,6 +165,7 @@ void Playground::HandleTextChange()
 void Playground::RecompileEverything()
 {
     ResetREPL();
+    ClearOutputTextBox();
     m_repl->ExecuteSwift(m_curr_text);
     m_prev_text = m_curr_text;
     m_min_line = m_num_lines;
@@ -172,6 +210,7 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
                 playground->RecompileEverything();
             else if(HIWORD(wparam) == BN_CLICKED && reinterpret_cast<HWND>(lparam) == playground->m_continue_btn)
                 playground->ContinueExecution();
+            fflush(stdout);
         }
         return 0;
     }
@@ -225,8 +264,33 @@ int main(int argc, char **argv)
     playground.m_text = CreateRichEdit(instance_handle, window, 50, 50, 300, 600);
     SetFontToConsolas(playground.m_text);
 
+    g_output = CreateRichEdit(instance_handle, window, 50, 650, 600, 300);
+    Edit_SetReadOnly(g_output, true);
+    SetFontToConsolas(g_output);
+
     SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&playground));
     ShowWindow(window, SW_SHOW);
+
+    //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
+    //             pipe buffer size is too small. We just pass the standard on Linux,
+    //             which is 0xFFFF.
+    if(!CreatePipe(&g_stdout_read_pipe, &g_stdout_write_pipe, nullptr, 0xFFFF))
+    {
+        Log(std::string("Failed to create pipe. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+        return 1;
+    }
+    if(!SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write_pipe))
+    {
+        Log(std::string("Failed to set std handle. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+        return 1;
+    }
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(g_stdout_write_pipe),
+                             _O_APPEND | _O_TEXT);
+    _dup2(fd, _fileno(stdout));
+
+    HANDLE update_thread = CreateThread(
+        nullptr, 0, UpdateOutputTextbox,
+        nullptr, 0, nullptr);
 
     MSG msg = {};
     while(GetMessage(&msg, nullptr, 0, 0))
@@ -234,5 +298,6 @@ int main(int argc, char **argv)
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+    _close(fd);
     return 0;
 }
