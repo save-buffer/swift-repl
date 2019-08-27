@@ -79,7 +79,7 @@ llvm::Expected<std::unique_ptr<REPL>> REPL::Create(
 REPL::REPL(bool is_playground, std::string default_module_cache_path)
     : m_is_playground(is_playground),
       m_default_module_cache_path(default_module_cache_path),
-      m_curr_input_number(0),
+      m_curr_input_number(1),
       m_diagnostic_engine(m_src_mgr),
       m_ast_ctx(swift::ASTContext::get(m_lang_opts, m_spath_opts, m_src_mgr,
                                        m_diagnostic_engine))
@@ -104,7 +104,6 @@ REPL::REPL(bool is_playground, std::string default_module_cache_path)
 
 std::string REPL::GetLine()
 {
-    m_curr_input_number++;
     std::cout << "\n";
     std::string result = "";
     do
@@ -138,6 +137,7 @@ bool REPL::IsExitString(const std::string &line)
 
 bool REPL::ExecuteSwift(std::string line)
 {
+    m_curr_input_number++;
     m_diagnostic_engine.resetHadAnyError();
 
     if(IsExitString(line))
