@@ -62,12 +62,15 @@ void ReplaceFunctionCallsWithIndirectFunctionCalls(
     call_inst->print(str_stream);
 
     std::string ptr_name = fn_ptr_map[fn_name];
-    auto *ptr = new llvm::GlobalVariable(
-        *module, llvm::Type::getInt8PtrTy(llvm_ctx),
-        false, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
-        nullptr, ptr_name);
-
-    ptr->setDLLStorageClass(llvm::GlobalValue::DLLStorageClassTypes::DLLImportStorageClass);
+    llvm::GlobalVariable *ptr = module->getGlobalVariable(ptr_name);
+    if(!ptr)
+    {
+        ptr = new llvm::GlobalVariable(
+            *module, llvm::Type::getInt8PtrTy(llvm_ctx),
+            false, llvm::GlobalValue::LinkageTypes::ExternalLinkage,
+            nullptr, ptr_name);
+        ptr->setDLLStorageClass(llvm::GlobalValue::DLLStorageClassTypes::DLLImportStorageClass);
+    }
 
     auto *load = new llvm::LoadInst(ptr->getType()->getElementType(), ptr);
     auto *bitcast = new llvm::BitCastInst(load, called_fn->getFunctionType()->getPointerTo(), "", call_inst);

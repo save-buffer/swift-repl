@@ -26,6 +26,22 @@ public:
     llvm::Error RemoveSymbol(llvm::StringRef symbol_name);
 
 private:
+    class SymbolGenerator
+    {
+    public:
+        SymbolGenerator(JIT &jit, llvm::DataLayout data_layout)
+            : m_jit(jit),
+              m_search(llvm::cantFail(
+                           orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+                               data_layout))) {}
+        orc::SymbolNameSet operator()(orc::JITDylib &jd, const orc::SymbolNameSet &names);
+        ~SymbolGenerator();
+    private:
+        orc::DynamicLibrarySearchGenerator m_search;
+        std::vector<std::uintptr_t *> m_imps;
+        JIT &m_jit;
+    };
+
     JIT(orc::JITTargetMachineBuilder machine_builder, llvm::DataLayout data_layout);
 
     orc::ExecutionSession m_execution_session;
@@ -35,5 +51,7 @@ private:
     llvm::DataLayout m_data_layout;
     orc::MangleAndInterner m_mangler;
     orc::ThreadSafeContext m_ctx;
+
+    SymbolGenerator m_generator;
 };
 #endif
