@@ -14,6 +14,9 @@
 #include <io.h>
 #include <fcntl.h>
 
+#define BACKGROUND_COLOR RGB(0x1E, 0x1E, 0x1E)
+#define FOREGROUND_COLOR RGB(0xDC, 0xDC, 0xDC)
+
 CommandLineOptions g_opts;
 
 HANDLE g_stdout_write_pipe;
@@ -48,8 +51,19 @@ HWND CreateRichEdit(HINSTANCE instance_handle,
         ES_MULTILINE | WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | WS_VSCROLL,
         x, y, width, height,
         owner_handle, nullptr, instance_handle, nullptr);
+
     SendMessage(edit_handle, EM_SETEVENTMASK, 0,
                 static_cast<LPARAM>(ENM_CHANGE | ENM_SCROLL));
+    SetFontToConsolas(edit_handle);
+
+    SendMessage(edit_handle, EM_SETBKGNDCOLOR, 0, static_cast<LPARAM>(BACKGROUND_COLOR));
+    CHARFORMAT fmt = {};
+    fmt.cbSize = sizeof(fmt);
+    fmt.dwMask = CFM_COLOR;
+    fmt.crTextColor = FOREGROUND_COLOR;
+    SendMessage(edit_handle, EM_SETCHARFORMAT,
+                static_cast<WPARAM>(SPF_SETDEFAULT),
+                reinterpret_cast<LPARAM>(&fmt));
     return edit_handle;
 }
 
@@ -320,32 +334,30 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    Playground playground;
+    Playground playground = {};
+    SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&playground));
+
     playground.m_window = window;
     playground.m_recompile_btn = CreateButton(instance_handle, window, 350, 100, 300, 100, "Recompile Everything");
     playground.m_continue_btn = CreateButton(instance_handle, window, 350, 200, 300, 100, "Continue Execution From Line 1");
     playground.m_min_line = 0;
     playground.m_num_lines = 1;
-    playground.m_line_numbers_width = 30;
+    playground.m_line_numbers_width = 45;
     playground.m_text = CreateRichEdit(
         instance_handle, window,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
     playground.m_line_numbers = CreateRichEdit(
         instance_handle, window,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
-    SetFontToConsolas(playground.m_text);
-    SetFontToConsolas(playground.m_line_numbers);
     Edit_SetReadOnly(playground.m_line_numbers, true);
 
     g_output = CreateRichEdit(
         instance_handle, window,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
     Edit_SetReadOnly(g_output, true);
-    SetFontToConsolas(g_output);
 
     playground.LayoutWindow();
 
-    SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&playground));
     ShowWindow(window, SW_SHOW);
 
     //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
