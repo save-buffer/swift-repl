@@ -16,6 +16,8 @@
 
 #define BACKGROUND_COLOR RGB(0x1E, 0x1E, 0x1E)
 #define FOREGROUND_COLOR RGB(0xDC, 0xDC, 0xDC)
+#define BUTTON_WIDTH 150
+#define BUTTON_HEIGHT 50
 
 CommandLineOptions g_opts;
 
@@ -146,11 +148,20 @@ void Playground::LayoutWindow()
 {
     RECT window_rect;
     GetClientRect(m_window, &window_rect);
+    LONG x_recompile = window_rect.left;
+    LONG y_recompile = window_rect.top;
+    LONG width_recompile = BUTTON_WIDTH;
+    LONG height_recompile = BUTTON_HEIGHT;
 
-    LONG x_lines = window_rect.left;
-    LONG y_lines = window_rect.top;
+    LONG x_continue = width_recompile;
+    LONG y_continue = y_recompile;
+    LONG width_continue = width_recompile * 2;
+    LONG height_continue = height_recompile;
+
+    LONG x_lines = x_recompile;
+    LONG y_lines = height_recompile;
     LONG width_lines = m_line_numbers_width;
-    LONG height_lines = (window_rect.bottom - window_rect.top);
+    LONG height_lines = (window_rect.bottom - height_recompile);
 
     LONG x_text = x_lines + width_lines;
     LONG y_text = y_lines;
@@ -162,6 +173,12 @@ void Playground::LayoutWindow()
     LONG width_output = (window_rect.right - x_lines) - width_text;
     LONG height_output = height_text;
 
+    SetWindowPos(m_recompile_btn, HWND_BOTTOM,
+                 x_recompile, y_recompile, width_recompile, height_recompile,
+                 SWP_NOZORDER);
+    SetWindowPos(m_continue_btn, HWND_BOTTOM,
+                 x_continue, y_continue, width_continue, height_continue,
+                 SWP_NOZORDER);
     SetWindowPos(m_line_numbers, HWND_BOTTOM,
                  x_lines, y_lines, width_lines, height_lines,
                  SWP_NOZORDER);
@@ -171,6 +188,8 @@ void Playground::LayoutWindow()
     SetWindowPos(g_output, HWND_BOTTOM,
                  x_output, y_output, width_output, height_output,
                  SWP_NOZORDER);
+
+    RedrawWindow(g_output, nullptr, nullptr, RDW_INVALIDATE);
 }
 
 void Playground::ResetREPL()
@@ -338,8 +357,12 @@ int main(int argc, char **argv)
     SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&playground));
 
     playground.m_window = window;
-    playground.m_recompile_btn = CreateButton(instance_handle, window, 350, 100, 300, 100, "Recompile Everything");
-    playground.m_continue_btn = CreateButton(instance_handle, window, 350, 200, 300, 100, "Continue Execution From Line 1");
+    playground.m_recompile_btn = CreateButton(instance_handle, window,
+                                              CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                              "Recompile Everything");
+    playground.m_continue_btn = CreateButton(instance_handle, window,
+                                             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                             "Continue Execution From Line 1");
     playground.m_min_line = 0;
     playground.m_num_lines = 1;
     playground.m_line_numbers_width = 45;
@@ -354,6 +377,7 @@ int main(int argc, char **argv)
     g_output = CreateRichEdit(
         instance_handle, window,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
+
     Edit_SetReadOnly(g_output, true);
 
     playground.LayoutWindow();
