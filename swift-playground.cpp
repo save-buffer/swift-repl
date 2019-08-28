@@ -48,7 +48,8 @@ HWND CreateRichEdit(HINSTANCE instance_handle,
         ES_MULTILINE | WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | WS_VSCROLL,
         x, y, width, height,
         owner_handle, nullptr, instance_handle, nullptr);
-    SendMessage(edit_handle, EM_SETEVENTMASK, 0, static_cast<LPARAM>(ENM_CHANGE));
+    SendMessage(edit_handle, EM_SETEVENTMASK, 0,
+                static_cast<LPARAM>(ENM_CHANGE | ENM_SCROLL));
     return edit_handle;
 }
 
@@ -112,13 +113,16 @@ struct Playground
     void HandleTextChange();
     void RecompileEverything();
     void ContinueExecution();
+    void UpdateLineNumbers(int num_lines);
 
     HWND m_window;
     HWND m_recompile_btn;
     HWND m_continue_btn;
     HWND m_text;
+    HWND m_line_numbers;
     int m_min_line;
     int m_num_lines;
+    int m_line_numbers_width;
     std::string m_prev_text;
     std::string m_curr_text;
     std::unique_ptr<REPL> m_repl;
@@ -128,16 +132,25 @@ void Playground::LayoutWindow()
 {
     RECT window_rect;
     GetClientRect(m_window, &window_rect);
-    LONG x_text = window_rect.left;
-    LONG y_text = window_rect.top;
-    LONG width_text = (window_rect.right - window_rect.left) / 2;
-    LONG height_text = (window_rect.bottom - window_rect.top);
 
-    LONG x_output = window_rect.left + width_text;
+    LONG x_lines = window_rect.left;
+    LONG y_lines = window_rect.top;
+    LONG width_lines = m_line_numbers_width;
+    LONG height_lines = (window_rect.bottom - window_rect.top);
+
+    LONG x_text = x_lines + width_lines;
+    LONG y_text = y_lines;
+    LONG width_text = (window_rect.right - x_lines) / 2;
+    LONG height_text = height_lines;
+
+    LONG x_output = x_text + width_text;
     LONG y_output = y_text;
-    LONG width_output = (window_rect.right - window_rect.left) - width_text;
+    LONG width_output = (window_rect.right - x_lines) - width_text;
     LONG height_output = height_text;
 
+    SetWindowPos(m_line_numbers, HWND_BOTTOM,
+                 x_lines, y_lines, width_lines, height_lines,
+                 SWP_NOZORDER);
     SetWindowPos(m_text, HWND_BOTTOM,
                  x_text, y_text, width_text, height_text,
                  SWP_NOZORDER);
@@ -175,9 +188,25 @@ void Playground::UpdateContinueButtonText()
     Button_SetText(m_continue_btn, new_btn_text.c_str());
 }
 
+void Playground::UpdateLineNumbers(int num_lines)
+{
+    //TODO(sasha): Handle word wrapping
+    std::string line_numbers_text = "";
+    for(int i = 1; i <= num_lines; i++)
+        line_numbers_text += std::to_string(i) + ".\n";
+    Edit_SetText(m_line_numbers, line_numbers_text.c_str());
+    SendMessage(m_line_numbers, EM_SHOWSCROLLBAR, SB_VERT, false);
+}
+
 void Playground::HandleTextChange()
 {
     m_curr_text = GetTextboxText(m_text);
+
+    int num_lines_raw = std::count(m_curr_text.begin(), m_curr_text.end(), '\n') + 1;
+    m_line_numbers_width = max(static_cast<int>(log10(num_lines_raw) + 1.0f) * 15, 45);
+    LayoutWindow();
+    UpdateLineNumbers(num_lines_raw);
+
     Trim(m_curr_text);
     m_curr_text.erase(std::remove(m_curr_text.begin(), m_curr_text.end(), '\r'), m_curr_text.end()); // Effectively changes \r\n to \n
     if(!StartsWith(m_curr_text, m_prev_text))
@@ -227,6 +256,12 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
         if(HIWORD(wparam) == EN_CHANGE && reinterpret_cast<HWND>(lparam) == playground->m_text)
         {
             playground->HandleTextChange();
+        }
+        else if(HIWORD(wparam) == EN_VSCROLL && reinterpret_cast<HWND>(lparam) == playground->m_text)
+        {
+            POINT scroll_pos;
+            SendMessage(playground->m_text, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
+            SendMessage(playground->m_line_numbers, EM_SETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll_pos));
         }
         else
         {
@@ -291,10 +326,16 @@ int main(int argc, char **argv)
     playground.m_continue_btn = CreateButton(instance_handle, window, 350, 200, 300, 100, "Continue Execution From Line 1");
     playground.m_min_line = 0;
     playground.m_num_lines = 1;
+    playground.m_line_numbers_width = 30;
     playground.m_text = CreateRichEdit(
         instance_handle, window,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
+    playground.m_line_numbers = CreateRichEdit(
+        instance_handle, window,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
     SetFontToConsolas(playground.m_text);
+    SetFontToConsolas(playground.m_line_numbers);
+    Edit_SetReadOnly(playground.m_line_numbers, true);
 
     g_output = CreateRichEdit(
         instance_handle, window,
