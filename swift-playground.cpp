@@ -106,12 +106,14 @@ void ClearOutputTextBox()
 
 struct Playground
 {
+    void LayoutWindow();
     void ResetREPL();
     void UpdateContinueButtonText();
     void HandleTextChange();
     void RecompileEverything();
     void ContinueExecution();
 
+    HWND m_window;
     HWND m_recompile_btn;
     HWND m_continue_btn;
     HWND m_text;
@@ -121,6 +123,28 @@ struct Playground
     std::string m_curr_text;
     std::unique_ptr<REPL> m_repl;
 };
+
+void Playground::LayoutWindow()
+{
+    RECT window_rect;
+    GetClientRect(m_window, &window_rect);
+    LONG x_text = window_rect.left;
+    LONG y_text = window_rect.top;
+    LONG width_text = (window_rect.right - window_rect.left) / 2;
+    LONG height_text = (window_rect.bottom - window_rect.top);
+
+    LONG x_output = window_rect.left + width_text;
+    LONG y_output = y_text;
+    LONG width_output = (window_rect.right - window_rect.left) - width_text;
+    LONG height_output = height_text;
+
+    SetWindowPos(m_text, HWND_BOTTOM,
+                 x_text, y_text, width_text, height_text,
+                 SWP_NOZORDER);
+    SetWindowPos(g_output, HWND_BOTTOM,
+                 x_output, y_output, width_output, height_output,
+                 SWP_NOZORDER);
+}
 
 void Playground::ResetREPL()
 {
@@ -194,12 +218,12 @@ void Playground::ContinueExecution()
 
 LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    Playground *playground = reinterpret_cast<Playground *>(GetWindowLongPtr(window_handle, GWLP_USERDATA));
+    assert(playground);
     switch (message)
     {
     case WM_COMMAND:
     {
-        Playground *playground = reinterpret_cast<Playground *>(GetWindowLongPtr(window_handle, GWLP_USERDATA));
-        assert(playground);
         if(HIWORD(wparam) == EN_CHANGE && reinterpret_cast<HWND>(lparam) == playground->m_text)
         {
             playground->HandleTextChange();
@@ -225,6 +249,11 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
         HDC hdc = BeginPaint(window_handle, &ps);
         FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
         EndPaint(window_handle, &ps);
+        return 0;
+    }
+    case WM_SIZE:
+    {
+        playground->LayoutWindow();
         return 0;
     }
     default:
@@ -257,16 +286,23 @@ int main(int argc, char **argv)
     }
 
     Playground playground;
+    playground.m_window = window;
     playground.m_recompile_btn = CreateButton(instance_handle, window, 350, 100, 300, 100, "Recompile Everything");
     playground.m_continue_btn = CreateButton(instance_handle, window, 350, 200, 300, 100, "Continue Execution From Line 1");
     playground.m_min_line = 0;
     playground.m_num_lines = 1;
-    playground.m_text = CreateRichEdit(instance_handle, window, 50, 50, 300, 600);
+    playground.m_text = CreateRichEdit(
+        instance_handle, window,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
     SetFontToConsolas(playground.m_text);
 
-    g_output = CreateRichEdit(instance_handle, window, 50, 650, 600, 300);
+    g_output = CreateRichEdit(
+        instance_handle, window,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
     Edit_SetReadOnly(g_output, true);
     SetFontToConsolas(g_output);
+
+    playground.LayoutWindow();
 
     SetWindowLongPtr(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&playground));
     ShowWindow(window, SW_SHOW);
