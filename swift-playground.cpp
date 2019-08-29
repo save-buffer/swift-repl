@@ -16,13 +16,17 @@
 #include <io.h>
 #include <fcntl.h>
 
+// NOTE(sasha): Defines __declspec(dllexport) g_ui. Include it after
+//              everything because it includes windows.h which defines
+//              min and max, which messes with other includes.
+#include "PlaygroundParentWindow.h"
+
 #define BACKGROUND_COLOR RGB(0x1E, 0x1E, 0x1E)
 #define FOREGROUND_COLOR RGB(0xDC, 0xDC, 0xDC)
 #define BUTTON_WIDTH 150
 #define BUTTON_HEIGHT 50
 
 CommandLineOptions g_opts;
-
 HANDLE g_stdout_write_pipe;
 HANDLE g_stdout_read_pipe;
 HWND g_output;
@@ -361,11 +365,11 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
     g_opts.is_playground = true;
     SetLoggingOptions(g_opts.logging_opts);
 
-    WNDCLASS wc = {};
-    wc.lpfnWndProc   = PlaygroundWindowProc;
-    wc.hInstance     = instance_handle;
-    wc.lpszClassName = "Playground Class";
-    RegisterClass(&wc);
+    WNDCLASS playground_wc = {};
+    playground_wc.lpfnWndProc   = PlaygroundWindowProc;
+    playground_wc.hInstance     = instance_handle;
+    playground_wc.lpszClassName = "Playground Class";
+    RegisterClass(&playground_wc);
 
     HWND window = CreateWindowEx(
         0, "Playground Class", "Swift Playground", WS_OVERLAPPEDWINDOW,
@@ -411,12 +415,19 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
     ui_wc.lpszClassName = "UI Class";
     RegisterClass(&ui_wc);
 
+#if 0
+    g_ui = CreateMDIWindow(
+        "MDICLIENT", "", WS_CHILD | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        window, instance_handle, 0);
+#else
     g_ui = CreateWindowEx(
         0, "UI Class", "", WS_CHILD | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         window, nullptr, instance_handle, nullptr);
 
     playground.LayoutWindow();
+#endif
 
     ShowWindow(window, SW_SHOW);
 
