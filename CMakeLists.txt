@@ -56,7 +56,7 @@ add_executable(swift-repl swift-repl.cpp)
 target_include_directories(swift-repl PRIVATE ${ALL_INCLUDE_DIRS})
 target_link_libraries(swift-repl PRIVATE REPL)
 
-add_executable(swift-playground swift-playground.cpp)
+add_executable(swift-playground WIN32 swift-playground.cpp)
 target_include_directories(swift-playground PRIVATE ${ALL_INCLUDE_DIRS})
 target_link_libraries(swift-playground PRIVATE
   REPL

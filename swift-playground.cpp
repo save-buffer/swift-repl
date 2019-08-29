@@ -1,4 +1,6 @@
+#include <codecvt>
 #include <iostream>
+#include <locale>
 #include <string>
 #include <mutex>
 
@@ -329,13 +331,26 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
     }
 }
 
-int main(int argc, char **argv)
+std::string ConvertWStringToString(const std::wstring& utf16Str)
 {
-    g_opts = ParseCommandLineOptions(argc, argv);
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
+    return conv.to_bytes(utf16Str);
+}
+
+int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
+{
+    int argc;
+    LPWSTR *args_wide = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::vector<std::string> args;
+    for(int i = 0; i < argc; i++)
+        args.push_back(ConvertWStringToString(args_wide[i]));
+    std::vector<char *> argv;
+    for(int i = 0; i < argc; i++)
+        argv.push_back(const_cast<char *>(args[i].c_str()));
+    g_opts = ParseCommandLineOptions(argc, argv.data());
     g_opts.is_playground = true;
     SetLoggingOptions(g_opts.logging_opts);
 
-    HINSTANCE instance_handle = GetModuleHandle(nullptr);
     WNDCLASS wc = {};
     wc.lpfnWndProc   = PlaygroundWindowProc;
     wc.hInstance     = instance_handle;
@@ -383,6 +398,13 @@ int main(int argc, char **argv)
     playground.LayoutWindow();
 
     ShowWindow(window, SW_SHOW);
+
+    AllocConsole();
+    ShowWindow(GetConsoleWindow(), SW_HIDE);
+    FILE *_;
+    freopen_s(&_, "CONOUT$", "w", stdout);
+    CreateFile("CONOUT$",  GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
     //             pipe buffer size is too small. We just pass the standard on Linux,
