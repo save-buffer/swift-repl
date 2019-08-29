@@ -26,6 +26,7 @@ CommandLineOptions g_opts;
 HANDLE g_stdout_write_pipe;
 HANDLE g_stdout_read_pipe;
 HWND g_output;
+HWND g_ui;
 std::vector<char> g_output_text;
 std::mutex g_output_text_lock;
 
@@ -173,7 +174,12 @@ void Playground::LayoutWindow()
     LONG x_output = x_text + width_text;
     LONG y_output = y_text;
     LONG width_output = (window_rect.right - x_lines) - width_text;
-    LONG height_output = height_text;
+    LONG height_output = height_text / 2;
+
+    LONG x_ui = x_output;
+    LONG y_ui = y_output + height_output;
+    LONG width_ui = width_output;
+    LONG height_ui = window_rect.bottom - (height_output + y_output);
 
     SetWindowPos(m_recompile_btn, HWND_BOTTOM,
                  x_recompile, y_recompile, width_recompile, height_recompile,
@@ -190,8 +196,12 @@ void Playground::LayoutWindow()
     SetWindowPos(g_output, HWND_BOTTOM,
                  x_output, y_output, width_output, height_output,
                  SWP_NOZORDER);
+    SetWindowPos(g_ui, HWND_BOTTOM,
+                 x_ui, y_ui, width_ui, height_ui,
+                 SWP_NOZORDER);
 
     RedrawWindow(g_output, nullptr, nullptr, RDW_INVALIDATE);
+    RedrawWindow(g_ui, nullptr, nullptr, RDW_INVALIDATE);
 }
 
 void Playground::ResetREPL()
@@ -394,6 +404,17 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
 
     Edit_SetReadOnly(g_output, true);
+
+    WNDCLASS ui_wc = {};
+    ui_wc.lpfnWndProc   = DefWindowProc;
+    ui_wc.hInstance     = instance_handle;
+    ui_wc.lpszClassName = "UI Class";
+    RegisterClass(&ui_wc);
+
+    g_ui = CreateWindowEx(
+        0, "UI Class", "", WS_CHILD | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        window, nullptr, instance_handle, nullptr);
 
     playground.LayoutWindow();
 
