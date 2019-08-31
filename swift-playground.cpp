@@ -345,6 +345,42 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
     }
 }
 
+struct RedirectStdoutRAII
+{
+    RedirectStdoutRAII() : fd(-1)
+    {
+        if(!g_opts.print_to_console)
+        {
+            ShowWindow(GetConsoleWindow(), SW_HIDE);
+            //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
+            //             pipe buffer size is too small. We just pass the standard on Linux,
+            //             which is 0xFFFF.
+            if(!CreatePipe(&g_stdout_read_pipe, &g_stdout_write_pipe, nullptr, 0xFFFF))
+            {
+                Log(std::string("Failed to create pipe. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+            }
+            if(!SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write_pipe))
+            {
+                Log(std::string("Failed to set std handle. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+            }
+            fd = _open_osfhandle(reinterpret_cast<intptr_t>(g_stdout_write_pipe),
+                                 _O_APPEND | _O_TEXT);
+            _dup2(fd, _fileno(stdout));
+
+            CreateThread(
+                nullptr, 0, UpdateOutputTextbox,
+                nullptr, 0, nullptr);
+        }
+    }
+
+    ~RedirectStdoutRAII()
+    {
+        if(fd == -1)
+            _close(fd);
+    }
+    int fd;
+};
+
 std::string ConvertWStringToString(const std::wstring& utf16Str)
 {
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
@@ -425,32 +461,11 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
     ShowWindow(window, SW_SHOW);
 
     AllocConsole();
-    ShowWindow(GetConsoleWindow(), SW_HIDE);
     FILE *_;
     freopen_s(&_, "CONOUT$", "w", stdout);
     CreateFile("CONOUT$",  GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
-    //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
-    //             pipe buffer size is too small. We just pass the standard on Linux,
-    //             which is 0xFFFF.
-    if(!CreatePipe(&g_stdout_read_pipe, &g_stdout_write_pipe, nullptr, 0xFFFF))
-    {
-        Log(std::string("Failed to create pipe. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
-        return 1;
-    }
-    if(!SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write_pipe))
-    {
-        Log(std::string("Failed to set std handle. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
-        return 1;
-    }
-    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(g_stdout_write_pipe),
-                             _O_APPEND | _O_TEXT);
-    _dup2(fd, _fileno(stdout));
-
-    HANDLE update_thread = CreateThread(
-        nullptr, 0, UpdateOutputTextbox,
-        nullptr, 0, nullptr);
+    RedirectStdoutRAII redirect_stdout_if_option_is_set;
 
     MSG msg = {};
     while(GetMessage(&msg, nullptr, 0, 0))
@@ -458,6 +473,5 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
-    _close(fd);
     return 0;
 }

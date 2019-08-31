@@ -62,6 +62,17 @@ void SetModuleCachePathOption(std::string opt, std::string val, CommandLineOptio
     opts.default_module_cache_path = val;
 }
 
+void SetPrintToConsoleOption(std::string opt, std::string val, CommandLineOptions &opts)
+{
+    int print_to_console = llvm::StringSwitch<int>(val)
+        .Case("true", 1)
+        .Case("false", 0)
+        .Default(-1);
+    if(print_to_console == -1)
+        std::cout << "[Warning] print_to_console is neither \"true\" nor \"false\". Defaulting to \"true\"\n";
+    opts.print_to_console = print_to_console != 0;
+}
+
 void HandleOptionWithoutEquals(std::string arg, CommandLineOptions &opts)
 {
     // NOTE(sasha): The 2 comes from the length of "-i" or "-l"
@@ -69,6 +80,8 @@ void HandleOptionWithoutEquals(std::string arg, CommandLineOptions &opts)
         opts.include_paths.push_back(arg.substr(2));
     else if(StartsWith(arg, "-L"))
         opts.link_paths.push_back(arg.substr(2));
+    else if(arg == "--print_to_console")
+        opts.print_to_console = true;
     else
         std::cout << "[Warning] Ignoring unrecognized parameter \"" << arg << "\"\n";
 }
@@ -88,32 +101,31 @@ void ParseSingleCommandLineOption(std::string arg, CommandLineOptions &opts)
         .Case("--logging_priority", SetLoggingPriorityOption)
         .Case("--playground", SetPlaygroundOption)
         .Case("--module_cache_path", SetModuleCachePathOption)
+        .Case("--print_to_console", SetPrintToConsoleOption)
         .Default(HandleUnknownOption)
         (opt, val, opts);
 }
 
-void SetupDefaultsIfUninitialized(CommandLineOptions &opts)
+CommandLineOptions DefaultCommandLineOptions()
 {
-    if(opts.logging_opts.log_areas == LoggingArea::Unknown)
-        opts.logging_opts.log_areas = LoggingArea::All;
-
-    if(opts.logging_opts.min_priority == LoggingPriority::Unknown)
-        opts.logging_opts.min_priority = LoggingPriority::None;
-
-    if(opts.default_module_cache_path.empty())
-        opts.default_module_cache_path = DEFAULT_MODULE_CACHE_PATH;
+    CommandLineOptions opts;
+    opts.logging_opts.log_areas = LoggingArea::All;
+    opts.logging_opts.min_priority = LoggingPriority::None;
+    opts.default_module_cache_path = DEFAULT_MODULE_CACHE_PATH;
+    opts.is_playground = false;
+    opts.print_to_console = false;
+    return opts;
 }
 
 //TODO(sasha): Make this more robust to things like -I <path> (with a space)
 CommandLineOptions ParseCommandLineOptions(int argc, char **argv)
 {
-    CommandLineOptions result;
+    CommandLineOptions result = DefaultCommandLineOptions();
     for(int i = 1; i < argc; i++)
     {
         std::string sanitized_option = argv[i];
         Trim(sanitized_option);
         ParseSingleCommandLineOption(sanitized_option, result);
     }
-    SetupDefaultsIfUninitialized(result);
     return result;
 }
