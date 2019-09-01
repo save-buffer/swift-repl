@@ -266,6 +266,7 @@ void Playground::HandleTextChange()
 
 void Playground::RecompileEverything()
 {
+    EnumChildWindows(g_ui, [](HWND handle, LPARAM) { return DestroyWindow(handle); }, 0);
     ResetREPL();
     ClearOutputTextBox();
     m_repl->ExecuteSwift(m_curr_text);
