@@ -26,6 +26,14 @@
 #define BUTTON_WIDTH 150
 #define BUTTON_HEIGHT 50
 
+const char *DEFAULT_TEXT =
+    "import WinSDK\n"
+    "import SwiftWin32\n"
+    "import PlaygroundSupport\n"
+    "let w = Window()\n"
+    "\n"
+    "PlaygroundPage.current.liveView = w\n";
+
 CommandLineOptions g_opts;
 HANDLE g_stdout_write_pipe;
 HANDLE g_stdout_read_pipe;
@@ -445,6 +453,7 @@ int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
 
     Edit_SetReadOnly(g_output, true);
+    Edit_SetText(playground.m_text, DEFAULT_TEXT);
 
     WNDCLASS ui_wc = {};
     ui_wc.lpfnWndProc   = DefWindowProc;
