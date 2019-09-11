@@ -1,0 +1,6 @@
+# RUN: cat %s | %swift-repl --logging_priority=none | %FileCheck %s
+# XFAIL: *
+enum ErrorTest: Error { case runtimeError(String) }
+throw ErrorTest.runtimeError("HI")
+e
+# CHECK: runtimeError("HI")
