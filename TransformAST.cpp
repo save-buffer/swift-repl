@@ -124,7 +124,7 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
 
         swift::Type string_type;
         for(auto *file : ast_ctx.getStdlibModule()->getFiles())
-            file->lookupValue({}, ast_ctx.getIdentifier("String"), swift::NLKind::UnqualifiedLookup, lookup_result);
+            file->lookupValue(ast_ctx.getIdentifier("String"), swift::NLKind::UnqualifiedLookup, lookup_result);
 
         if(auto *type_decl = llvm::dyn_cast<swift::NominalTypeDecl>(lookup_result.front()))
             string_type = type_decl->getDeclaredType();
