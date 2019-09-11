@@ -100,6 +100,7 @@ REPL::REPL(bool is_playground, std::string default_module_cache_path)
     SetupIROpts();
     SetupImporters();
     swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
+    swift::registerParseRequestFunctions(m_ast_ctx->evaluator);
 }
 
 std::string REPL::GetLine()
