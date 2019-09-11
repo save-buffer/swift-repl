@@ -80,6 +80,8 @@ void HandleOptionWithoutEquals(std::string arg, CommandLineOptions &opts)
         opts.include_paths.push_back(arg.substr(2));
     else if(StartsWith(arg, "-L"))
         opts.link_paths.push_back(arg.substr(2));
+    else if(StartsWith(arg, "-F"))
+        opts.framework_paths.push_back(arg.substr(2));
     else if(arg == "--print_to_console")
         opts.print_to_console = true;
     else

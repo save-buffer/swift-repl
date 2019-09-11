@@ -119,6 +119,11 @@ void REPL::AddModuleSearchPath(std::string path)
     m_ast_ctx->addSearchPath(path, false, false);
 }
 
+void REPL::AddFrameworkSearchPath(std::string path)
+{
+    m_ast_ctx->addSearchPath(path, true, false);
+}
+
 void REPL::AddLoadSearchPath(std::string path)
 {
     m_jit->AddSearchPath(path);
