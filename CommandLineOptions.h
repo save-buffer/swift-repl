@@ -14,6 +14,7 @@ struct CommandLineOptions
     std::string default_module_cache_path;
     std::vector<std::string> include_paths;
     std::vector<std::string> link_paths;
+    std::vector<std::string> framework_paths;
 };
 
 CommandLineOptions ParseCommandLineOptions(int argc, char **argv);

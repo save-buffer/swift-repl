@@ -233,6 +233,8 @@ void Playground::ResetREPL()
                   [&](auto s) { (*repl)->AddModuleSearchPath(s); });
     std::for_each(g_opts.link_paths.begin(), g_opts.link_paths.end(),
                   [&](auto s) { (*repl)->AddLoadSearchPath(s); });
+    std::for_each(g_opts.framework_paths.begin(), g_opts.framework_paths.end(),
+                  [&](auto s) { (*repl)->AddFrameworkSearchPath(s); });
 
     m_repl = std::move(*repl);
 }
