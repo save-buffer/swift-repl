@@ -1,0 +1,4 @@
+module CPlaygroundSupport {
+    header "../PlaygroundParentWindow.h"
+    export *
+}

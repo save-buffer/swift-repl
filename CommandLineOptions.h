@@ -10,6 +10,7 @@ struct CommandLineOptions
 {
     LoggingOptions logging_opts;
     bool is_playground;
+    bool print_to_console;
     std::string default_module_cache_path;
     std::vector<std::string> include_paths;
     std::vector<std::string> link_paths;

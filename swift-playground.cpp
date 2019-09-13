@@ -1,4 +1,6 @@
+#include <codecvt>
 #include <iostream>
+#include <locale>
 #include <string>
 #include <mutex>
 
@@ -14,16 +16,29 @@
 #include <io.h>
 #include <fcntl.h>
 
+// NOTE(sasha): Defines __declspec(dllexport) g_ui. Include it after
+//              everything because it includes windows.h which defines
+//              min and max, which messes with other includes.
+#include "PlaygroundParentWindow.h"
+
 #define BACKGROUND_COLOR RGB(0x1E, 0x1E, 0x1E)
 #define FOREGROUND_COLOR RGB(0xDC, 0xDC, 0xDC)
 #define BUTTON_WIDTH 150
 #define BUTTON_HEIGHT 50
 
-CommandLineOptions g_opts;
+const char *DEFAULT_TEXT =
+    "import WinSDK\n"
+    "import SwiftWin32\n"
+    "import PlaygroundSupport\n"
+    "let w = Window()\n"
+    "\n"
+    "PlaygroundPage.current.liveView = w\n";
 
+CommandLineOptions g_opts;
 HANDLE g_stdout_write_pipe;
 HANDLE g_stdout_read_pipe;
 HWND g_output;
+HWND g_ui;
 std::vector<char> g_output_text;
 std::mutex g_output_text_lock;
 
@@ -171,7 +186,12 @@ void Playground::LayoutWindow()
     LONG x_output = x_text + width_text;
     LONG y_output = y_text;
     LONG width_output = (window_rect.right - x_lines) - width_text;
-    LONG height_output = height_text;
+    LONG height_output = height_text / 2;
+
+    LONG x_ui = x_output;
+    LONG y_ui = y_output + height_output;
+    LONG width_ui = width_output;
+    LONG height_ui = window_rect.bottom - (height_output + y_output);
 
     SetWindowPos(m_recompile_btn, HWND_BOTTOM,
                  x_recompile, y_recompile, width_recompile, height_recompile,
@@ -188,8 +208,12 @@ void Playground::LayoutWindow()
     SetWindowPos(g_output, HWND_BOTTOM,
                  x_output, y_output, width_output, height_output,
                  SWP_NOZORDER);
+    SetWindowPos(g_ui, HWND_BOTTOM,
+                 x_ui, y_ui, width_ui, height_ui,
+                 SWP_NOZORDER);
 
     RedrawWindow(g_output, nullptr, nullptr, RDW_INVALIDATE);
+    RedrawWindow(g_ui, nullptr, nullptr, RDW_INVALIDATE);
 }
 
 void Playground::ResetREPL()
@@ -250,6 +274,7 @@ void Playground::HandleTextChange()
 
 void Playground::RecompileEverything()
 {
+    EnumChildWindows(g_ui, [](HWND handle, LPARAM) { return DestroyWindow(handle); }, 0);
     ResetREPL();
     ClearOutputTextBox();
     m_repl->ExecuteSwift(m_curr_text);
@@ -329,18 +354,67 @@ LRESULT CALLBACK PlaygroundWindowProc(HWND window_handle, UINT message, WPARAM w
     }
 }
 
-int main(int argc, char **argv)
+struct RedirectStdoutRAII
 {
-    g_opts = ParseCommandLineOptions(argc, argv);
+    RedirectStdoutRAII() : fd(-1)
+    {
+        if(!g_opts.print_to_console)
+        {
+            ShowWindow(GetConsoleWindow(), SW_HIDE);
+            //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
+            //             pipe buffer size is too small. We just pass the standard on Linux,
+            //             which is 0xFFFF.
+            if(!CreatePipe(&g_stdout_read_pipe, &g_stdout_write_pipe, nullptr, 0xFFFF))
+            {
+                Log(std::string("Failed to create pipe. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+            }
+            if(!SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write_pipe))
+            {
+                Log(std::string("Failed to set std handle. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
+            }
+            fd = _open_osfhandle(reinterpret_cast<intptr_t>(g_stdout_write_pipe),
+                                 _O_APPEND | _O_TEXT);
+            _dup2(fd, _fileno(stdout));
+
+            CreateThread(
+                nullptr, 0, UpdateOutputTextbox,
+                nullptr, 0, nullptr);
+        }
+    }
+
+    ~RedirectStdoutRAII()
+    {
+        if(fd == -1)
+            _close(fd);
+    }
+    int fd;
+};
+
+std::string ConvertWStringToString(const std::wstring& utf16Str)
+{
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
+    return conv.to_bytes(utf16Str);
+}
+
+int WinMain(HINSTANCE instance_handle, HINSTANCE, char *, int)
+{
+    int argc;
+    LPWSTR *args_wide = CommandLineToArgvW(GetCommandLineW(), &argc);
+    std::vector<std::string> args;
+    for(int i = 0; i < argc; i++)
+        args.push_back(ConvertWStringToString(args_wide[i]));
+    std::vector<char *> argv;
+    for(int i = 0; i < argc; i++)
+        argv.push_back(const_cast<char *>(args[i].c_str()));
+    g_opts = ParseCommandLineOptions(argc, argv.data());
     g_opts.is_playground = true;
     SetLoggingOptions(g_opts.logging_opts);
 
-    HINSTANCE instance_handle = GetModuleHandle(nullptr);
-    WNDCLASS wc = {};
-    wc.lpfnWndProc   = PlaygroundWindowProc;
-    wc.hInstance     = instance_handle;
-    wc.lpszClassName = "Playground Class";
-    RegisterClass(&wc);
+    WNDCLASS playground_wc = {};
+    playground_wc.lpfnWndProc   = PlaygroundWindowProc;
+    playground_wc.hInstance     = instance_handle;
+    playground_wc.lpszClassName = "Playground Class";
+    RegisterClass(&playground_wc);
 
     HWND window = CreateWindowEx(
         0, "Playground Class", "Swift Playground", WS_OVERLAPPEDWINDOW,
@@ -379,31 +453,29 @@ int main(int argc, char **argv)
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT);
 
     Edit_SetReadOnly(g_output, true);
+    Edit_SetText(playground.m_text, DEFAULT_TEXT);
+
+    WNDCLASS ui_wc = {};
+    ui_wc.lpfnWndProc   = DefWindowProc;
+    ui_wc.hInstance     = instance_handle;
+    ui_wc.lpszClassName = "UI Class";
+    RegisterClass(&ui_wc);
+
+    g_ui = CreateWindowEx(
+        0, "UI Class", "", WS_CHILD | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        window, nullptr, instance_handle, nullptr);
 
     playground.LayoutWindow();
 
     ShowWindow(window, SW_SHOW);
 
-    //NOTE(sasha): There are \Bigg{\emph{\textbf{SEVERE}}} performance issues if
-    //             pipe buffer size is too small. We just pass the standard on Linux,
-    //             which is 0xFFFF.
-    if(!CreatePipe(&g_stdout_read_pipe, &g_stdout_write_pipe, nullptr, 0xFFFF))
-    {
-        Log(std::string("Failed to create pipe. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
-        return 1;
-    }
-    if(!SetStdHandle(STD_OUTPUT_HANDLE, g_stdout_write_pipe))
-    {
-        Log(std::string("Failed to set std handle. Last Error: ") + std::to_string(GetLastError()), LoggingPriority::Error);
-        return 1;
-    }
-    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(g_stdout_write_pipe),
-                             _O_APPEND | _O_TEXT);
-    _dup2(fd, _fileno(stdout));
-
-    HANDLE update_thread = CreateThread(
-        nullptr, 0, UpdateOutputTextbox,
-        nullptr, 0, nullptr);
+    AllocConsole();
+    FILE *_;
+    freopen_s(&_, "CONOUT$", "w", stdout);
+    CreateFile("CONOUT$",  GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    RedirectStdoutRAII redirect_stdout_if_option_is_set;
 
     MSG msg = {};
     while(GetMessage(&msg, nullptr, 0, 0))
@@ -411,6 +483,5 @@ int main(int argc, char **argv)
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
-    _close(fd);
     return 0;
 }

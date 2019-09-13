@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.15.0)
 
-project(swift-repl LANGUAGES CXX)
+project(swift-repl LANGUAGES CXX Swift)
 
 find_package(LLVM CONFIG REQUIRED)
 find_package(Swift CONFIG REQUIRED)
 find_package(Clang CONFIG REQUIRED)
+find_package(SwiftWin32 CONFIG REQUIRED)
 find_package(Python COMPONENTS Interpreter)
 
+set(CMAKE_Swift_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/swift)
 set(SwiftREPL_TESTS_DIR ${CMAKE_SOURCE_DIR}/tests)
 set(LIT ${LLVM_TOOLS_BINARY_DIR}/llvm-lit.py)
 
@@ -56,7 +58,9 @@ add_executable(swift-repl swift-repl.cpp)
 target_include_directories(swift-repl PRIVATE ${ALL_INCLUDE_DIRS})
 target_link_libraries(swift-repl PRIVATE REPL)
 
-add_executable(swift-playground swift-playground.cpp)
+add_executable(swift-playground WIN32 swift-playground.cpp)
+set_target_properties(swift-playground PROPERTIES
+  ENABLE_EXPORTS true)
 target_include_directories(swift-playground PRIVATE ${ALL_INCLUDE_DIRS})
 target_link_libraries(swift-playground PRIVATE
   REPL
@@ -64,6 +68,8 @@ target_link_libraries(swift-playground PRIVATE
   User32
   Gdi32
   Msvcrt)
+
+add_subdirectory(PlaygroundSupport)
 
 add_dependencies(swift-repl REPL)
 add_dependencies(swift-playground REPL)
