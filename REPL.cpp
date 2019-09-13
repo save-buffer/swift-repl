@@ -100,6 +100,7 @@ REPL::REPL(bool is_playground, std::string default_module_cache_path)
     SetupIROpts();
     SetupImporters();
     swift::registerTypeCheckerRequestFunctions(m_ast_ctx->evaluator);
+    swift::registerParseRequestFunctions(m_ast_ctx->evaluator);
 }
 
 std::string REPL::GetLine()
@@ -117,6 +118,11 @@ std::string REPL::GetLine()
 void REPL::AddModuleSearchPath(std::string path)
 {
     m_ast_ctx->addSearchPath(path, false, false);
+}
+
+void REPL::AddFrameworkSearchPath(std::string path)
+{
+    m_ast_ctx->addSearchPath(path, true, false);
 }
 
 void REPL::AddLoadSearchPath(std::string path)
@@ -175,7 +181,6 @@ bool REPL::ExecuteSwift(std::string line)
                                    &done,
                                    nullptr /* SILParserState */,
                                    &persistent_state,
-                                   nullptr /* DelayedParseCB */,
                                    false /* DelayBodyParsing */);
         CHECK_ERROR();
     } while(!done);
@@ -333,8 +338,10 @@ llvm::Error REPL::UpdateFunctionPointers()
 
 bool REPL::CompileSourceFileToIRAndAddToJIT(swift::SourceFile &src_file)
 {
+    swift::Lowering::TypeConverter type_converter(*src_file.getParentModule());
     std::unique_ptr<swift::SILModule> sil_module(
         swift::performSILGeneration(src_file,
+                                    type_converter,
                                     m_invocation.getSILOptions()));
     CHECK_ERROR();
     ConfigureFunctionLinkage(src_file, sil_module);

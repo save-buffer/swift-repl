@@ -29,6 +29,7 @@ struct REPL
         std::string default_module_cache_path = DEFAULT_MODULE_CACHE_PATH);
     std::string GetLine();
     void AddModuleSearchPath(std::string path);
+    void AddFrameworkSearchPath(std::string path);
     void AddLoadSearchPath(std::string path);
     bool IsExitString(const std::string &line);
     bool ExecuteSwift(std::string line);

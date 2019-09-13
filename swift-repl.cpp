@@ -26,6 +26,8 @@ std::unique_ptr<REPL> SetupREPLWithOptions(int argc, char **argv)
                   [&](auto s) { (*repl)->AddModuleSearchPath(s); });
     std::for_each(opts.link_paths.begin(), opts.link_paths.end(),
                   [&](auto s) { (*repl)->AddLoadSearchPath(s); });
+    std::for_each(opts.framework_paths.begin(), opts.framework_paths.end(),
+                  [&](auto s) { (*repl)->AddFrameworkSearchPath(s); });
     return std::move(*repl);
 }
 
