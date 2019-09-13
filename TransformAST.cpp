@@ -64,6 +64,92 @@ void CombineTopLevelDeclsAndMoveToBack(swift::SourceFile &src_file)
     src_file.Decls.push_back(new_tld);
 }
 
+llvm::Optional<swift::Type> GetStandardLibraryType(swift::ASTContext &ast_ctx, llvm::StringRef type_name)
+{
+    llvm::SmallVector<swift::ValueDecl *, 0> lookup_result;
+    for(auto *file : ast_ctx.getStdlibModule()->getFiles())
+        file->lookupValue(ast_ctx.getIdentifier(type_name), swift::NLKind::UnqualifiedLookup, lookup_result);
+
+    swift::Type result;
+    if(auto *type_decl = llvm::dyn_cast<swift::NominalTypeDecl>(lookup_result.front()))
+        return type_decl->getDeclaredType();
+
+    return llvm::Optional<swift::Type>();
+}
+
+swift::CallExpr *CreatePrintStmt(swift::ASTContext &ast_ctx, swift::Expr *expr_to_print)
+{
+    // Insert print statement:
+    llvm::SmallVector<swift::ValueDecl *, 0> lookup_result;
+    ast_ctx.getStdlibModule()->lookupMember(
+        lookup_result,
+        ast_ctx.getStdlibModule(),
+        swift::DeclName(ast_ctx.getIdentifier("print")),
+        swift::Identifier());
+
+    swift::ValueDecl *print_decl = lookup_result.front();
+
+    swift::Type string_type;
+    if(auto t = GetStandardLibraryType(ast_ctx, "String"))
+        string_type = *t;
+    else
+        llvm::report_fatal_error("Broken Standard Library: 'Swift.String' is missing");
+
+    swift::Identifier separator_id = ast_ctx.getIdentifier("separator");
+    swift::Identifier terminator_id = ast_ctx.getIdentifier("terminator");
+
+    swift::Type print_type = swift::FunctionType::get(
+        {
+            swift::AnyFunctionType::Param(ast_ctx.TheAnyType, swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
+            swift::AnyFunctionType::Param(string_type, separator_id),
+            swift::AnyFunctionType::Param(string_type, terminator_id),
+        },
+        ast_ctx.TheEmptyTupleType);
+
+    swift::DeclRefExpr *print_ref = new (ast_ctx) swift::DeclRefExpr(
+        swift::ConcreteDeclRef(print_decl),
+        swift::DeclNameLoc(), true, swift::AccessSemantics::Ordinary, print_type);
+
+    swift::ErasureExpr *erasure = swift::ErasureExpr::create(
+        ast_ctx, expr_to_print, ast_ctx.TheAnyType, {});
+
+    swift::ArrayExpr *array = swift::ArrayExpr::create(
+        ast_ctx, swift::SourceLoc(), { erasure }, {}, swift::SourceLoc(), swift::ArraySliceType::get(ast_ctx.TheAnyType));
+
+    swift::VarargExpansionExpr *vararg = new (ast_ctx) swift::VarargExpansionExpr(
+        array, false, array->getType());
+
+    swift::DefaultArgumentExpr *default_separator = new (ast_ctx) swift::DefaultArgumentExpr(
+        swift::ConcreteDeclRef(print_decl), 1, swift::SourceLoc(), string_type);
+
+    swift::DefaultArgumentExpr *default_terminator = new (ast_ctx) swift::DefaultArgumentExpr(
+        swift::ConcreteDeclRef(print_decl), 2, swift::SourceLoc(), string_type);
+
+    swift::Type tuple_type = swift::TupleType::get(
+        {
+            swift::TupleTypeElt(array->getType(), swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
+            swift::TupleTypeElt(string_type, separator_id),
+            swift::TupleTypeElt(string_type, terminator_id),
+        },
+        ast_ctx);
+
+    swift::TupleExpr *tuple = swift::TupleExpr::create(
+        ast_ctx, swift::SourceLoc(),
+        { vararg, default_separator, default_terminator },
+        { swift::Identifier(), separator_id, terminator_id },
+        { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
+        swift::SourceLoc(), false, true,
+        tuple_type);
+
+    swift::CallExpr *call = swift::CallExpr::create(
+        ast_ctx, print_ref, tuple,
+        { swift::Identifier() },
+        { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
+        false, true, ast_ctx.TheEmptyTupleType);
+    call->setThrows(false);
+    return call;
+}
+
 void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
 {
     if(src_file.Decls.empty())
@@ -111,87 +197,17 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
 
         *back_iterator = assignment;
 
-        // Insert print statement:
-        llvm::SmallVector<swift::ValueDecl *, 0> lookup_result;
-        ast_ctx.getStdlibModule()->lookupMember(
-            lookup_result,
-            ast_ctx.getStdlibModule(),
-            swift::DeclName(ast_ctx.getIdentifier("print")),
-            swift::Identifier());
-
-        swift::ValueDecl *print_decl = lookup_result.front();
-        lookup_result.clear();
-
-        swift::Type string_type;
-        for(auto *file : ast_ctx.getStdlibModule()->getFiles())
-            file->lookupValue(ast_ctx.getIdentifier("String"), swift::NLKind::UnqualifiedLookup, lookup_result);
-
-        if(auto *type_decl = llvm::dyn_cast<swift::NominalTypeDecl>(lookup_result.front()))
-            string_type = type_decl->getDeclaredType();
-        assert(string_type);
-
-        swift::Identifier separator_id = ast_ctx.getIdentifier("separator");
-        swift::Identifier terminator_id = ast_ctx.getIdentifier("terminator");
-
-        swift::Type print_type = swift::FunctionType::get(
-            {
-                swift::AnyFunctionType::Param(ast_ctx.TheAnyType, swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
-                swift::AnyFunctionType::Param(string_type, separator_id),
-                swift::AnyFunctionType::Param(string_type, terminator_id),
-            },
-            ast_ctx.TheEmptyTupleType);
-
-        swift::DeclRefExpr *print_ref = new (ast_ctx) swift::DeclRefExpr(
-            swift::ConcreteDeclRef(print_decl),
-            swift::DeclNameLoc(), true, swift::AccessSemantics::Ordinary, print_type);
-
         swift::DeclRefExpr *res_var_ref = new (ast_ctx) swift::DeclRefExpr(
             swift::ConcreteDeclRef(return_var),
             swift::DeclNameLoc(), true, swift::AccessSemantics::Ordinary, return_type);
 
-        swift::ErasureExpr *erasure = swift::ErasureExpr::create(
-            ast_ctx, res_var_ref, ast_ctx.TheAnyType, {});
-
-        swift::ArrayExpr *array = swift::ArrayExpr::create(
-            ast_ctx, swift::SourceLoc(), { erasure }, {}, swift::SourceLoc(), swift::ArraySliceType::get(ast_ctx.TheAnyType));
-
-        swift::VarargExpansionExpr *vararg = new (ast_ctx) swift::VarargExpansionExpr(
-            array, false, array->getType());
-
-        swift::DefaultArgumentExpr *default_separator = new (ast_ctx) swift::DefaultArgumentExpr(
-            swift::ConcreteDeclRef(print_decl), 1, swift::SourceLoc(), string_type);
-
-        swift::DefaultArgumentExpr *default_terminator = new (ast_ctx) swift::DefaultArgumentExpr(
-            swift::ConcreteDeclRef(print_decl), 2, swift::SourceLoc(), string_type);
-
-        swift::Type tuple_type = swift::TupleType::get(
-            {
-                swift::TupleTypeElt(array->getType(), swift::Identifier(), swift::ParameterTypeFlags().withVariadic(true)),
-                swift::TupleTypeElt(string_type, separator_id),
-                swift::TupleTypeElt(string_type, terminator_id),
-            },
-            ast_ctx);
-
-        swift::TupleExpr *tuple = swift::TupleExpr::create(
-            ast_ctx, swift::SourceLoc(),
-            { vararg, default_separator, default_terminator },
-            { swift::Identifier(), separator_id, terminator_id },
-            { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
-            swift::SourceLoc(), false, true,
-            tuple_type);
-
-        swift::CallExpr *call = swift::CallExpr::create(
-            ast_ctx, print_ref, tuple,
-            { swift::Identifier() },
-            { swift::SourceLoc(), swift::SourceLoc(), swift::SourceLoc() },
-            false, true, ast_ctx.TheEmptyTupleType);
-        call->setThrows(false);
+        swift::CallExpr *print_call = CreatePrintStmt(ast_ctx, res_var_ref);
 
         // Append the call to print to the body
         std::vector<swift::ASTNode> new_body;
         for(auto statement : last_top_level_code_decl->getBody()->getElements())
             new_body.push_back(statement);
-        new_body.push_back(call);
+        new_body.push_back(print_call);
 
         // Update the body
         last_top_level_code_decl->setBody(swift::BraceStmt::create(
@@ -199,6 +215,47 @@ void TransformFinalExpressionAndAddGlobal(swift::SourceFile &src_file)
                                               new_body, swift::SourceLoc(), true)
             );
     }
+}
+
+// NOTE(sasha): This is currently not supported in the JIT, but we would have needed to do this anyway if
+//              it did.
+swift::DoCatchStmt *WrapInDoCatch(swift::ASTContext &ast_ctx, swift::FuncDecl *fn, swift::BraceStmt *body)
+{
+    assert(body && "Body cannot be null");
+
+    swift::Type error_type;
+    if(auto t = GetStandardLibraryType(ast_ctx, "Error"))
+        error_type = *t;
+    else
+        llvm::report_fatal_error("Broken Standard Library: 'Swift.Error' is missing");
+
+    swift::VarDecl *error_var = new (ast_ctx) swift::VarDecl(
+        /* isStatic */ false, swift::VarDecl::Introducer::Let,
+        /* isCaptureList */ false, swift::SourceLoc(), ast_ctx.Id_error, fn);
+    error_var->setImplicit();
+    error_var->setType(error_type);
+    error_var->setInterfaceType(error_type);
+
+    swift::Pattern *name_pattern = new (ast_ctx) swift::NamedPattern(error_var);
+    swift::Pattern *catch_pattern = new (ast_ctx) swift::VarPattern(
+        swift::SourceLoc(), /* isLet */ true, name_pattern, /* implicit */ true);
+    catch_pattern->setType(error_type);
+
+    swift::DeclRefExpr *error_var_ref = new (ast_ctx) swift::DeclRefExpr(
+        swift::ConcreteDeclRef(error_var), swift::DeclNameLoc(),
+        true, swift::AccessSemantics::Ordinary, error_type);
+    swift::CallExpr *print = CreatePrintStmt(ast_ctx, error_var_ref);
+
+    swift::BraceStmt *catch_body = swift::BraceStmt::create(
+        ast_ctx, swift::SourceLoc(), { print }, swift::SourceLoc(), true);
+
+    swift::CatchStmt *catch_stmt = new (ast_ctx) swift::CatchStmt(
+        swift::SourceLoc(), catch_pattern, swift::SourceLoc(),
+        /* guardExpr */ nullptr, catch_body, /* implicit */ true);
+    swift::DoCatchStmt *result = swift::DoCatchStmt::create(
+        ast_ctx, swift::LabeledStmtInfo(), swift::SourceLoc(), body,
+        { catch_stmt }, /* implicit */ true);
+    return result;
 }
 
 void WrapInFunction(swift::SourceFile &src_file)
@@ -220,6 +277,7 @@ void WrapInFunction(swift::SourceFile &src_file)
         swift::DeclName fn_name(ast_ctx, fn_name_id, empty_params_list);
 
         swift::BraceStmt *old_top_level_body = last_top_level_code_decl->getBody();
+
         swift::SourceLoc fn_start = old_top_level_body->getLBraceLoc();
         swift::SourceLoc fn_end = old_top_level_body->getRBraceLoc();
 
@@ -234,8 +292,10 @@ void WrapInFunction(swift::SourceFile &src_file)
             last_top_level_code_decl->getParent()); // Parent
         new_func->setInterfaceType(swift::FunctionType::get({}, ast_ctx.TheEmptyTupleType, {}));
 
+        swift::DoCatchStmt *do_catch = WrapInDoCatch(ast_ctx, new_func, old_top_level_body);
+
         swift::BraceStmt *fn_body = swift::BraceStmt::create(
-            ast_ctx, swift::SourceLoc(), old_top_level_body->getElements(),
+            ast_ctx, swift::SourceLoc(), { do_catch },
             swift::SourceLoc(), true);
 
         new_func->setBody(fn_body);
