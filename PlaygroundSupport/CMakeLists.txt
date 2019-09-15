@@ -5,7 +5,7 @@ target_link_libraries(PlaygroundSupport PUBLIC
   SwiftWin32
   swift-playground)
 target_compile_options(PlaygroundSupport PRIVATE
-  "SHELL:-Xcc -I..")
+  "SHELL:-Xcc -I${CMAKE_SOURCE_DIR}")
 set_target_properties(PlaygroundSupport PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_BINARY_DIR}/swift
   INTERFACE_LINK_DIRECTORIES $<TARGET_LINKER_FILE_DIR:PlaygroundSupport>)
